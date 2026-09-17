@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # 🔧 Mealie PowerTools
 
 Admin-grade control panel for your [Mealie](https://github.com/mealie-recipes/mealie) self-hosted recipe server.
