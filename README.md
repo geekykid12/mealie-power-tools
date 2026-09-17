@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # 🔧 Mealie PowerTools
 
 Admin-grade control panel for your [Mealie](https://github.com/mealie-recipes/mealie) self-hosted recipe server.
@@ -87,3 +88,7 @@ mealie-powertools/
 ```
 
 The app talks directly to your Mealie API from the browser — no backend proxy needed. CORS must be enabled on your Mealie instance (it is by default).
+=======
+# mealie-power-tools
+Super Admin Power Tools for easily managing all mealie recipes and integrations.
+>>>>>>> 74c7c562fe7b4e54deebeb7ff76b8e1819fb280b
