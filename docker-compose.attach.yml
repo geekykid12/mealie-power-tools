@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Use this file if Mealie is ALREADY RUNNING in its own compose stack.
+#
+#  1. Find your existing Mealie network name:
+#       docker inspect mealie --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'
+#
+#  2. Replace "mealie_default" below with your actual network name.
+#
+#  3. Run:
+#       docker compose -f docker-compose.attach.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  mealie_default:         # ← Change this to your existing Mealie network name
+    external: true
+
+services:
+  powertools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mealie-powertools
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - mealie_default    # ← Same name as above

@@ -1,0 +1,71 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Mealie PowerTools — docker-compose.yml
+#
+#  Usage:
+#    Option A — alongside a NEW Mealie install:
+#      docker compose up -d
+#
+#    Option B — alongside an EXISTING Mealie container:
+#      1. Attach PowerTools to your existing network:
+#         Set MEALIE_NETWORK below to your existing network name.
+#      2. Run only the powertools service:
+#         docker compose up -d powertools
+#
+#  Access PowerTools at:  http://localhost:3000
+#  Mealie URL to enter:   http://mealie:9000  (inside Docker network)
+#              or:        http://localhost:9000 (from your browser)
+# ─────────────────────────────────────────────────────────────────────────────
+
+networks:
+  mealie-net:
+    name: mealie-net
+    # If you have an existing network, change driver to "external: true"
+    # and set the name to match. Then remove mealie service below.
+    driver: bridge
+
+services:
+
+  # ── Mealie (include this block only if you don't have Mealie running yet) ──
+  mealie:
+    image: ghcr.io/mealie-recipes/mealie:latest
+    container_name: mealie
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    environment:
+      - ALLOW_SIGNUP=true
+      - BASE_URL=http://localhost:9000
+      # Optional: set your timezone
+      - TZ=America/New_York
+      # Optional: change default credentials
+      # Default login: changeme@example.com / MyPassword
+    volumes:
+      - mealie-data:/app/data
+    networks:
+      - mealie-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/api/app/about"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ── Mealie PowerTools ──────────────────────────────────────────────────────
+  powertools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mealie-powertools
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - mealie-net
+    depends_on:
+      mealie:
+        condition: service_healthy
+    labels:
+      - "com.mealie.powertools=true"
+
+volumes:
+  mealie-data:
+    driver: local
