@@ -266,7 +266,7 @@ function ConnectPanel({ onConnect }) {
             <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".06em" }}>
               Mealie URL
             </label>
-            <input value={url} onChange={e => setUrl(e.target.value)} placeholder="http://127.0.0.1:9925/api" />
+            <input value={url} onChange={e => setUrl(e.target.value)} placeholder="http://<mealie-ip>:9925/api" />
           </div>
           <div>
             <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".06em" }}>
@@ -284,7 +284,8 @@ function ConnectPanel({ onConnect }) {
             {loading ? <Spinner size={14} /> : "Connect →"}
           </button>
         </div>
-        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.muted }}>
+        <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.muted, lineHeight: 1.8 }}>
+          Mealie URL format: <span style={{ color: C.accent, fontFamily: "monospace" }}>http://&lt;mealie-ip&gt;:&lt;port&gt;/api</span><br />
           Generate an API token in Mealie → Profile → API Tokens
         </div>
       </div>
@@ -1307,10 +1308,14 @@ function DashboardSection({ api, user, addLog, onNavigate }) {
         <div style={{ fontWeight: 600, marginBottom: 16 }}>Quick Actions</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
           {[
-            { icon: "parse", label: "Run Ingredient Parser", sub: "Unparsed recipes only", color: C.accent, tab: "parser" },
-            { icon: "recipe", label: "Browse Recipes", sub: "Search & manage", color: C.blue, tab: "recipes" },
-            { icon: "cookbook", label: "View Cookbooks", sub: "Organize & visualize", color: C.green, tab: "cookbooks" },
-            { icon: "household", label: "Household Info", sub: "Members & settings", color: "#a855f7", tab: "households" },
+            { icon: "parse",     label: "Ingredient Parser", sub: "Run on unparsed recipes",   color: C.accent,   tab: "parser" },
+            { icon: "recipe",    label: "Recipes",           sub: "Browse, edit & manage",      color: C.blue,     tab: "recipes" },
+            { icon: "edit",      label: "Bulk Operations",   sub: "Tag, categorize, delete",    color: C.yellow,   tab: "bulk" },
+            { icon: "cookbook",  label: "Tags & Categories", sub: "Manage taxonomy",            color: C.green,    tab: "taxonomy" },
+            { icon: "search",    label: "Data Quality",      sub: "Audit your recipe library",  color: "#a855f7",  tab: "quality" },
+            { icon: "recipe",    label: "Image Manager",     sub: "Fix missing images",         color: "#ec4899",  tab: "images" },
+            { icon: "stats",     label: "Activity",          sub: "Recently added & cooked",    color: C.blue,     tab: "activity" },
+            { icon: "settings",  label: "Admin",             sub: "Users, backups, server",     color: C.red,      tab: "admin" },
           ].map(a => (
             <div key={a.tab} className="card" style={{
               cursor: "pointer", padding: 16,
@@ -1353,11 +1358,17 @@ export default function App() {
   if (!conn) return <ConnectPanel onConnect={handleConnect} />;
 
   const tabs = [
-    { id: "dashboard",   label: "Dashboard",   icon: "stats" },
-    { id: "recipes",     label: "Recipes",     icon: "recipe" },
-    { id: "parser",      label: "Ing. Parser", icon: "parse" },
-    { id: "cookbooks",   label: "Cookbooks",   icon: "cookbook" },
-    { id: "households",  label: "Household",   icon: "household" },
+    { id: "dashboard",   label: "Dashboard",    icon: "stats" },
+    { id: "recipes",     label: "Recipes",      icon: "recipe" },
+    { id: "parser",      label: "Ing. Parser",  icon: "parse" },
+    { id: "bulk",        label: "Bulk Ops",     icon: "edit" },
+    { id: "taxonomy",    label: "Tags & Cats",  icon: "cookbook" },
+    { id: "cookbooks",   label: "Cookbooks",    icon: "cookbook" },
+    { id: "quality",     label: "Data Quality", icon: "search" },
+    { id: "images",      label: "Images",       icon: "recipe" },
+    { id: "activity",    label: "Activity",     icon: "stats" },
+    { id: "households",  label: "Households",   icon: "household" },
+    { id: "admin",       label: "Admin",        icon: "settings" },
   ];
 
   return (
@@ -1390,24 +1401,43 @@ export default function App() {
         </div>
 
         {/* Nav */}
-        <nav style={{ flex: 1, padding: "12px 10px", display: "flex", flexDirection: "column", gap: 4 }}>
-          {tabs.map(t => (
+        <nav style={{ flex: 1, padding: "12px 10px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
+          {[
+            { group: "Overview" },
+            { id: "dashboard",  label: "Dashboard",    icon: "stats" },
+            { group: "Recipes" },
+            { id: "recipes",    label: "Recipes",      icon: "recipe" },
+            { id: "parser",     label: "Ing. Parser",  icon: "parse" },
+            { id: "bulk",       label: "Bulk Ops",     icon: "edit" },
+            { id: "cookbooks",  label: "Cookbooks",    icon: "cookbook" },
+            { group: "Library" },
+            { id: "taxonomy",   label: "Tags & Cats",  icon: "cookbook" },
+            { id: "quality",    label: "Data Quality", icon: "search" },
+            { id: "images",     label: "Images",       icon: "recipe" },
+            { id: "activity",   label: "Activity",     icon: "stats" },
+            { group: "Admin" },
+            { id: "households", label: "Households",   icon: "household" },
+            { id: "admin",      label: "Admin",        icon: "settings" },
+          ].map((t, i) => t.group ? (
+            <div key={i} style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: ".12em",
+              color: C.muted, textTransform: "uppercase",
+              padding: "10px 12px 4px", opacity: .6,
+            }}>{t.group}</div>
+          ) : (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               display: "flex", alignItems: "center", gap: 10,
-              padding: "10px 12px", borderRadius: 10, border: "none",
+              padding: "9px 12px", borderRadius: 10, border: "none",
               background: tab === t.id ? `${C.accent}18` : "transparent",
               color: tab === t.id ? C.accent : C.muted,
-              fontWeight: tab === t.id ? 600 : 400, fontSize: 13,
+              fontWeight: tab === t.id ? 600 : 400, fontSize: 12,
               textAlign: "left", width: "100%", cursor: "pointer",
               transition: "all .2s",
             }}>
-              <Icon name={t.icon} size={16} color={tab === t.id ? C.accent : C.muted} />
+              <Icon name={t.icon} size={15} color={tab === t.id ? C.accent : C.muted} />
               {t.label}
               {tab === t.id && (
-                <div style={{
-                  marginLeft: "auto", width: 4, height: 4,
-                  borderRadius: "50%", background: C.accent,
-                }} />
+                <div style={{ marginLeft: "auto", width: 4, height: 4, borderRadius: "50%", background: C.accent }} />
               )}
             </button>
           ))}
@@ -1446,7 +1476,9 @@ export default function App() {
             <div style={{ fontSize: 22, fontWeight: 700 }}>
               {tabs.find(t => t.id === tab)?.label}
             </div>
-            <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>{conn.url}</div>
+            <div style={{ fontSize: 12, color: C.muted, marginTop: 4 }}>
+              {conn.url} · PowerTools on port 3000
+            </div>
           </div>
 
           {/* Content */}
@@ -1454,8 +1486,14 @@ export default function App() {
             {tab === "dashboard"  && <DashboardSection  api={conn.api} user={conn.user} addLog={addLog} onNavigate={setTab} />}
             {tab === "recipes"    && <RecipesSection    api={conn.api} addLog={addLog} />}
             {tab === "parser"     && <ParserSection     api={conn.api} addLog={addLog} />}
+            {tab === "bulk"       && <BulkSection       api={conn.api} addLog={addLog} />}
+            {tab === "taxonomy"   && <TaxonomySection   api={conn.api} addLog={addLog} />}
             {tab === "cookbooks"  && <CookbooksSection  api={conn.api} addLog={addLog} />}
+            {tab === "quality"    && <DataQualitySection api={conn.api} addLog={addLog} />}
+            {tab === "images"     && <ImageSection      api={conn.api} addLog={addLog} />}
+            {tab === "activity"   && <ActivitySection   api={conn.api} addLog={addLog} />}
             {tab === "households" && <HouseholdsSection api={conn.api} addLog={addLog} />}
+            {tab === "admin"      && <AdminSection      api={conn.api} addLog={addLog} />}
           </div>
 
           {/* Global log footer */}
@@ -1467,6 +1505,943 @@ export default function App() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── SECTION: Bulk Operations ─────────────────────────────────────────────────
+function BulkSection({ api, addLog }) {
+  const [recipes, setRecipes] = useState([]);
+  const [selected, setSelected] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [tags, setTags] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [cookbooks, setCookbooks] = useState([]);
+  const [assignTag, setAssignTag] = useState("");
+  const [assignCat, setAssignCat] = useState("");
+  const [assignCb, setAssignCb] = useState("");
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        let all = [], page = 1;
+        while (true) {
+          const d = await api.get(`/recipes?page=${page}&perPage=100`);
+          all = [...all, ...(d.items || [])];
+          if (all.length >= d.total) break;
+          page++;
+        }
+        setRecipes(all);
+        const [t, c, cb] = await Promise.all([
+          api.get("/recipes/tags?perPage=500"),
+          api.get("/recipes/categories?perPage=500"),
+          api.get("/households/cookbooks?perPage=100"),
+        ]);
+        setTags(t.items || []);
+        setCategories(c.items || []);
+        setCookbooks(cb.items || []);
+      } catch (e) { addLog("error", e.message); }
+      setLoading(false);
+    })();
+  }, [api]);
+
+  const filtered = recipes.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
+  const allSelected = filtered.length > 0 && filtered.every(r => selected.has(r.id));
+
+  const toggleAll = () => {
+    if (allSelected) setSelected(s => { const n = new Set(s); filtered.forEach(r => n.delete(r.id)); return n; });
+    else setSelected(s => { const n = new Set(s); filtered.forEach(r => n.add(r.id)); return n; });
+  };
+
+  const run = async (action) => {
+    if (selected.size === 0) return;
+    setRunning(true);
+    const slugs = recipes.filter(r => selected.has(r.id)).map(r => r.slug);
+    try {
+      if (action === "tag" && assignTag) {
+        const tag = tags.find(t => t.id === assignTag);
+        for (const slug of slugs) {
+          const full = await api.get(`/recipes/${slug}`);
+          const existing = full.tags || [];
+          if (!existing.find(t => t.id === assignTag)) {
+            await api.patch(`/recipes/${slug}`, { tags: [...existing, { id: tag.id, name: tag.name }] });
+          }
+        }
+        addLog("ok", `Tag "${tag?.name}" assigned to ${slugs.length} recipes`);
+      } else if (action === "cat" && assignCat) {
+        const cat = categories.find(c => c.id === assignCat);
+        for (const slug of slugs) {
+          const full = await api.get(`/recipes/${slug}`);
+          const existing = full.recipeCategory || [];
+          if (!existing.find(c => c.id === assignCat)) {
+            await api.patch(`/recipes/${slug}`, { recipeCategory: [...existing, { id: cat.id, name: cat.name }] });
+          }
+        }
+        addLog("ok", `Category "${cat?.name}" assigned to ${slugs.length} recipes`);
+      } else if (action === "delete") {
+        if (!confirm(`Permanently delete ${selected.size} recipes?`)) { setRunning(false); return; }
+        for (const slug of slugs) { await api.delete(`/recipes/${slug}`); }
+        setSelected(new Set());
+        addLog("ok", `Deleted ${slugs.length} recipes`);
+        const d = await api.get("/recipes?page=1&perPage=100");
+        setRecipes(d.items || []);
+      }
+    } catch (e) { addLog("error", e.message); }
+    setRunning(false);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <StatCard label="Total Recipes" value={recipes.length} accent={C.accent} />
+        <StatCard label="Selected" value={selected.size} accent={selected.size > 0 ? C.blue : C.muted} sub="Click rows to select" />
+      </div>
+
+      {/* Actions toolbar */}
+      <div className="card" style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 180 }}>
+          <label style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>Assign Tag</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select value={assignTag} onChange={e => setAssignTag(e.target.value)} style={{ flex: 1 }}>
+              <option value="">Select tag…</option>
+              {tags.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <button className="btn-success" onClick={() => run("tag")} disabled={running || !assignTag || selected.size === 0}>
+              Apply to {selected.size}
+            </button>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 180 }}>
+          <label style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>Assign Category</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <select value={assignCat} onChange={e => setAssignCat(e.target.value)} style={{ flex: 1 }}>
+              <option value="">Select category…</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <button className="btn-success" onClick={() => run("cat")} disabled={running || !assignCat || selected.size === 0}>
+              Apply to {selected.size}
+            </button>
+          </div>
+        </div>
+        <button className="btn-danger" onClick={() => run("delete")} disabled={running || selected.size === 0}
+          style={{ alignSelf: "flex-end" }}>
+          🗑 Delete {selected.size > 0 ? selected.size : ""} Selected
+        </button>
+      </div>
+
+      {/* Search + table */}
+      <div style={{ position: "relative" }}>
+        <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", zIndex: 1 }}>
+          <Icon name="search" size={14} color={C.muted} />
+        </div>
+        <input style={{ paddingLeft: 32 }} placeholder="Filter recipes…" value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        {loading ? <div style={{ padding: 40, textAlign: "center" }}><Spinner size={24} /></div> : (
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+                </th>
+                <th>Name</th>
+                <th>Tags</th>
+                <th>Categories</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(r => (
+                <tr key={r.id} onClick={() => setSelected(s => { const n = new Set(s); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })}
+                  style={{ cursor: "pointer", background: selected.has(r.id) ? `${C.blue}12` : undefined }}>
+                  <td onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={selected.has(r.id)}
+                      onChange={() => setSelected(s => { const n = new Set(s); n.has(r.id) ? n.delete(r.id) : n.add(r.id); return n; })} />
+                  </td>
+                  <td style={{ fontWeight: 500 }}>{r.name}</td>
+                  <td>{(r.tags || []).map(t => <span key={t.id} className="tag tag-blue" style={{ marginRight: 3 }}>{t.name}</span>)}</td>
+                  <td>{(r.recipeCategory || []).map(c => <span key={c.id} className="tag tag-orange" style={{ marginRight: 3 }}>{c.name}</span>)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── SECTION: Tags & Categories ───────────────────────────────────────────────
+function TaxonomySection({ api, addLog }) {
+  const [activeType, setActiveType] = useState("tags");
+  const [items, setItems] = useState([]);
+  const [recipeCounts, setRecipeCounts] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [editItem, setEditItem] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const endpoint = activeType === "tags" ? "/recipes/tags" : "/recipes/categories";
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const d = await api.get(`${endpoint}?perPage=500`);
+      const list = d.items || [];
+      setItems(list);
+      // Count recipes per item
+      const counts = {};
+      await Promise.all(list.map(async item => {
+        try {
+          const param = activeType === "tags" ? "tags" : "categories";
+          const r = await api.get(`/recipes?${param}=${item.id}&perPage=1`);
+          counts[item.id] = r.total || 0;
+        } catch { counts[item.id] = 0; }
+      }));
+      setRecipeCounts(counts);
+    } catch (e) { addLog("error", e.message); }
+    setLoading(false);
+  }, [api, activeType]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const create = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await api.post(endpoint, { name: newName.trim() });
+      addLog("ok", `Created ${activeType.slice(0, -1)}: ${newName}`);
+      setNewName("");
+      load();
+    } catch (e) { addLog("error", e.message); }
+    setSaving(false);
+  };
+
+  const update = async () => {
+    setSaving(true);
+    try {
+      await api.put(`${endpoint}/${editItem.id}`, { name: editName });
+      addLog("ok", `Renamed to: ${editName}`);
+      setEditItem(null);
+      load();
+    } catch (e) { addLog("error", e.message); }
+    setSaving(false);
+  };
+
+  const del = async (item) => {
+    if (!confirm(`Delete "${item.name}"? It will be removed from all recipes.`)) return;
+    try {
+      await api.delete(`${endpoint}/${item.id}`);
+      addLog("ok", `Deleted: ${item.name}`);
+      load();
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const unused = items.filter(i => !recipeCounts[i.id]);
+
+  const deleteAllUnused = async () => {
+    if (!confirm(`Delete ${unused.length} unused ${activeType}?`)) return;
+    for (const item of unused) {
+      try { await api.delete(`${endpoint}/${item.id}`); } catch {}
+    }
+    addLog("ok", `Deleted ${unused.length} unused ${activeType}`);
+    load();
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Type switcher */}
+      <div style={{ display: "flex", gap: 8 }}>
+        {["tags", "categories"].map(type => (
+          <button key={type} onClick={() => setActiveType(type)} style={{
+            padding: "8px 20px", borderRadius: 8, border: `2px solid`,
+            borderColor: activeType === type ? C.accent : C.border,
+            background: activeType === type ? `${C.accent}18` : C.surfaceAlt,
+            color: activeType === type ? C.accent : C.muted,
+            fontWeight: 600, fontSize: 13, cursor: "pointer",
+          }}>
+            {type.charAt(0).toUpperCase() + type.slice(1)}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <StatCard label={`Total ${activeType}`} value={items.length} accent={C.accent} />
+        <StatCard label="Unused" value={unused.length} accent={unused.length > 0 ? C.red : C.green}
+          sub="Not on any recipe" />
+      </div>
+
+      {/* Create new */}
+      <div className="card" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <input value={newName} onChange={e => setNewName(e.target.value)}
+          placeholder={`New ${activeType.slice(0, -1)} name…`}
+          onKeyDown={e => e.key === "Enter" && create()}
+          style={{ flex: 1 }} />
+        <button className="btn-primary" onClick={create} disabled={saving || !newName.trim()}>
+          {saving ? <Spinner size={13} /> : `+ Create`}
+        </button>
+        {unused.length > 0 && (
+          <button className="btn-danger" onClick={deleteAllUnused}>
+            🗑 Delete {unused.length} Unused
+          </button>
+        )}
+      </div>
+
+      {/* List */}
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        {loading ? <div style={{ padding: 40, textAlign: "center" }}><Spinner size={24} /></div> : (
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Recipes</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.sort((a, b) => (recipeCounts[b.id] || 0) - (recipeCounts[a.id] || 0)).map(item => (
+                <tr key={item.id}>
+                  <td style={{ fontWeight: 500 }}>{item.name}</td>
+                  <td>
+                    <span className="mono" style={{ color: C.muted, fontSize: 12 }}>
+                      {recipeCounts[item.id] ?? "…"}
+                    </span>
+                  </td>
+                  <td>
+                    <span className={`tag ${recipeCounts[item.id] ? "tag-green" : "tag-red"}`}>
+                      {recipeCounts[item.id] ? "in use" : "unused"}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn-ghost" style={{ padding: "4px 10px" }}
+                        onClick={() => { setEditItem(item); setEditName(item.name); }}>
+                        <Icon name="edit" size={13} />
+                      </button>
+                      <button className="btn-danger" style={{ padding: "4px 10px" }} onClick={() => del(item)}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Edit modal */}
+      {editItem && (
+        <div style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div className="card fade-up" style={{ width: 400 }}>
+            <div style={{ fontWeight: 600, marginBottom: 16 }}>Rename {activeType.slice(0, -1)}</div>
+            <input value={editName} onChange={e => setEditName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && update()} style={{ marginBottom: 14 }} />
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn-ghost" onClick={() => setEditItem(null)}>Cancel</button>
+              <button className="btn-primary" onClick={update} disabled={saving}>
+                {saving ? <Spinner size={13} /> : "Rename"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SECTION: Data Quality ─────────────────────────────────────────────────────
+function DataQualitySection({ api, addLog }) {
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState(null);
+  const [checking, setChecking] = useState("");
+
+  const runAudit = async () => {
+    setLoading(true);
+    setResults(null);
+    addLog("info", "Starting data quality audit…");
+
+    try {
+      // Fetch all recipes with full detail
+      let all = [], page = 1;
+      while (true) {
+        setChecking(`Loading recipes (page ${page})…`);
+        const d = await api.get(`/recipes?page=${page}&perPage=100`);
+        all = [...all, ...(d.items || [])];
+        if (all.length >= d.total) break;
+        page++;
+      }
+
+      setChecking("Fetching full recipe details…");
+      const full = await Promise.all(all.map(r => api.get(`/recipes/${r.slug}`).catch(() => r)));
+
+      setChecking("Checking for duplicates…");
+      const nameMap = {};
+      full.forEach(r => {
+        const key = r.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (!nameMap[key]) nameMap[key] = [];
+        nameMap[key].push(r);
+      });
+      const duplicates = Object.values(nameMap).filter(g => g.length > 1);
+
+      setChecking("Checking source URLs…");
+      const noImage = full.filter(r => !r.image);
+      const noDesc = full.filter(r => !r.description || r.description.trim() === "");
+      const noIngredients = full.filter(r => !r.recipeIngredient || r.recipeIngredient.length === 0);
+      const noInstructions = full.filter(r => !r.recipeInstructions || r.recipeInstructions.length === 0);
+      const noTime = full.filter(r => !r.prepTime && !r.cookTime && !r.totalTime);
+      const noTags = full.filter(r => (!r.tags || r.tags.length === 0) && (!r.recipeCategory || r.recipeCategory.length === 0));
+      const unparsed = full.filter(r =>
+        (r.recipeIngredient || []).length > 0 &&
+        (r.recipeIngredient || []).every(i => !i.food && !i.unit)
+      );
+      const noSource = full.filter(r => !r.orgURL || r.orgURL.trim() === "");
+      const noRating = full.filter(r => !r.rating || r.rating === 0);
+
+      setResults({ total: full.length, duplicates, noImage, noDesc, noIngredients, noInstructions, noTime, noTags, unparsed, noSource, noRating, recipes: full });
+      addLog("ok", `Audit complete — ${full.length} recipes checked`);
+    } catch (e) { addLog("error", e.message); }
+    setLoading(false);
+    setChecking("");
+  };
+
+  const scoreColor = (pct) => pct >= 80 ? C.green : pct >= 50 ? C.yellow : C.red;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div className="card" style={{ display: "flex", alignItems: "center", gap: 20 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Recipe Data Quality Audit</div>
+          <div style={{ fontSize: 13, color: C.muted }}>Scans all recipes for missing fields, duplicates, unparsed ingredients, and more.</div>
+        </div>
+        <button className="btn-primary" style={{ padding: "12px 24px", fontSize: 14 }} onClick={runAudit} disabled={loading}>
+          {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={14} /> {checking}</span> : "▶ Run Audit"}
+        </button>
+      </div>
+
+      {results && (() => {
+        const checks = [
+          { label: "Has Image",        bad: results.noImage,        icon: "🖼️" },
+          { label: "Has Description",  bad: results.noDesc,         icon: "📝" },
+          { label: "Has Ingredients",  bad: results.noIngredients,  icon: "🥕" },
+          { label: "Has Instructions", bad: results.noInstructions, icon: "📋" },
+          { label: "Has Time Info",    bad: results.noTime,         icon: "⏱️" },
+          { label: "Has Tags/Cats",    bad: results.noTags,         icon: "🏷️" },
+          { label: "Ingredients Parsed", bad: results.unparsed,    icon: "⚡" },
+          { label: "Has Source URL",   bad: results.noSource,       icon: "🔗" },
+          { label: "Has Rating",       bad: results.noRating,       icon: "⭐" },
+        ];
+
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Score overview */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+              {checks.map(c => {
+                const good = results.total - c.bad.length;
+                const pct = results.total ? Math.round((good / results.total) * 100) : 100;
+                return (
+                  <div key={c.label} className="card" style={{ padding: 14 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, color: C.muted }}>{c.icon} {c.label}</span>
+                      <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: scoreColor(pct) }}>{pct}%</span>
+                    </div>
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: `${pct}%`, background: scoreColor(pct) }} />
+                    </div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
+                      {c.bad.length > 0 ? `${c.bad.length} need attention` : "All good ✓"}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Duplicates */}
+            {results.duplicates.length > 0 && (
+              <div className="card">
+                <div style={{ fontWeight: 600, marginBottom: 12, color: C.yellow }}>
+                  ⚠ Possible Duplicate Recipes ({results.duplicates.length} groups)
+                </div>
+                {results.duplicates.map((group, i) => (
+                  <div key={i} style={{ background: C.surfaceAlt, borderRadius: 8, padding: "10px 14px", marginBottom: 8 }}>
+                    {group.map(r => (
+                      <div key={r.id} style={{ fontSize: 13, padding: "2px 0" }}>
+                        <span style={{ fontWeight: 500 }}>{r.name}</span>
+                        <span className="mono" style={{ color: C.muted, fontSize: 11, marginLeft: 8 }}>{r.slug}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Detail tables for each issue */}
+            {checks.filter(c => c.bad.length > 0).map(c => (
+              <div key={c.label} className="card" style={{ padding: 0, overflow: "hidden" }}>
+                <div style={{ padding: "12px 16px", fontWeight: 600, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between" }}>
+                  <span>{c.icon} Missing: {c.label}</span>
+                  <span className="tag tag-red">{c.bad.length} recipes</span>
+                </div>
+                <table>
+                  <thead><tr><th>Recipe</th><th>Slug</th></tr></thead>
+                  <tbody>
+                    {c.bad.slice(0, 10).map(r => (
+                      <tr key={r.id}>
+                        <td style={{ fontWeight: 500 }}>{r.name}</td>
+                        <td><span className="mono" style={{ fontSize: 11, color: C.muted }}>{r.slug}</span></td>
+                      </tr>
+                    ))}
+                    {c.bad.length > 10 && (
+                      <tr><td colSpan={2} style={{ color: C.muted, fontSize: 12, textAlign: "center", padding: 10 }}>
+                        …and {c.bad.length - 10} more
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
+      {!results && !loading && (
+        <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🔍</div>
+          Run the audit to see a full quality report for all your recipes.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SECTION: Admin ────────────────────────────────────────────────────────────
+function AdminSection({ api, addLog }) {
+  const [activeTab, setActiveTab] = useState("users");
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [backupRunning, setBackupRunning] = useState(false);
+  const [serverInfo, setServerInfo] = useState(null);
+  const [newUser, setNewUser] = useState({ username: "", email: "", password: "", fullName: "", admin: false });
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const [u, info] = await Promise.all([
+          api.get("/admin/users?perPage=100"),
+          api.get("/app/about"),
+        ]);
+        setUsers(u.items || []);
+        setServerInfo(info);
+      } catch (e) { addLog("error", e.message); }
+      setLoading(false);
+    })();
+  }, [api]);
+
+  const toggleAdmin = async (user) => {
+    try {
+      await api.put(`/admin/users/${user.id}`, { ...user, admin: !user.admin });
+      setUsers(u => u.map(x => x.id === user.id ? { ...x, admin: !x.admin } : x));
+      addLog("ok", `${user.username} admin: ${!user.admin}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const toggleEnabled = async (user) => {
+    try {
+      await api.put(`/admin/users/${user.id}`, { ...user, enabled: !user.enabled });
+      setUsers(u => u.map(x => x.id === user.id ? { ...x, enabled: !x.enabled } : x));
+      addLog("ok", `${user.username} ${!user.enabled ? "enabled" : "disabled"}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const deleteUser = async (user) => {
+    if (!confirm(`Delete user "${user.username}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/admin/users/${user.id}`);
+      setUsers(u => u.filter(x => x.id !== user.id));
+      addLog("ok", `Deleted user: ${user.username}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const createUser = async () => {
+    setSaving(true);
+    try {
+      await api.post("/admin/users", newUser);
+      addLog("ok", `Created user: ${newUser.username}`);
+      setCreating(false);
+      setNewUser({ username: "", email: "", password: "", fullName: "", admin: false });
+      const u = await api.get("/admin/users?perPage=100");
+      setUsers(u.items || []);
+    } catch (e) { addLog("error", e.message); }
+    setSaving(false);
+  };
+
+  const runBackup = async () => {
+    setBackupRunning(true);
+    try {
+      addLog("info", "Triggering backup…");
+      await api.post("/admin/backups/export/run", {});
+      addLog("ok", "Backup created successfully");
+    } catch (e) { addLog("error", `Backup failed: ${e.message}`); }
+    setBackupRunning(false);
+  };
+
+  const adminTabs = ["users", "server", "backups"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        {adminTabs.map(t => (
+          <button key={t} onClick={() => setActiveTab(t)} style={{
+            padding: "8px 20px", borderRadius: 8, border: `2px solid`,
+            borderColor: activeTab === t ? C.accent : C.border,
+            background: activeTab === t ? `${C.accent}18` : C.surfaceAlt,
+            color: activeTab === t ? C.accent : C.muted,
+            fontWeight: 600, fontSize: 13, cursor: "pointer", textTransform: "capitalize",
+          }}>{t}</button>
+        ))}
+      </div>
+
+      {/* Users tab */}
+      {activeTab === "users" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <button className="btn-primary" onClick={() => setCreating(true)}>+ New User</button>
+          </div>
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            {loading ? <div style={{ padding: 40, textAlign: "center" }}><Spinner size={24} /></div> : (
+              <table>
+                <thead>
+                  <tr><th>User</th><th>Email</th><th>Household</th><th>Role</th><th>Status</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{
+                            width: 30, height: 30, borderRadius: "50%",
+                            background: `linear-gradient(135deg, ${C.accent}44, ${C.blue}44)`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 12, fontWeight: 700, color: C.accent,
+                          }}>{(u.fullName || u.username || "?")[0].toUpperCase()}</div>
+                          <div>
+                            <div style={{ fontWeight: 500, fontSize: 13 }}>{u.fullName || u.username}</div>
+                            <div style={{ fontSize: 11, color: C.muted }}>{u.username}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ fontSize: 12, color: C.muted }}>{u.email}</td>
+                      <td style={{ fontSize: 12 }}>{u.household || "—"}</td>
+                      <td>
+                        <button onClick={() => toggleAdmin(u)} className={`tag ${u.admin ? "tag-orange" : "tag-muted"}`}
+                          style={{ cursor: "pointer", border: "none" }}>
+                          {u.admin ? "admin" : "user"}
+                        </button>
+                      </td>
+                      <td>
+                        <button onClick={() => toggleEnabled(u)} className={`tag ${u.enabled !== false ? "tag-green" : "tag-red"}`}
+                          style={{ cursor: "pointer", border: "none" }}>
+                          {u.enabled !== false ? "active" : "disabled"}
+                        </button>
+                      </td>
+                      <td>
+                        <button className="btn-danger" style={{ padding: "4px 10px" }} onClick={() => deleteUser(u)}>
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Server tab */}
+      {activeTab === "server" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {serverInfo && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+              {[
+                ["Version", serverInfo.version],
+                ["Production", serverInfo.production ? "Yes" : "No"],
+                ["Demo", serverInfo.demoStatus ? "Yes" : "No"],
+                ["Allow Signup", serverInfo.allowSignup ? "Yes" : "No"],
+                ["Default Group", serverInfo.defaultGroup],
+                ["Build ID", serverInfo.buildId],
+              ].map(([k, v]) => (
+                <div key={k} style={{ background: C.surfaceAlt, borderRadius: 8, padding: "12px 14px" }}>
+                  <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>{k}</div>
+                  <div className="mono" style={{ fontSize: 13 }}>{v ?? "—"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Backups tab */}
+      {activeTab === "backups" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="card">
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Create Backup</div>
+            <div style={{ color: C.muted, fontSize: 13, marginBottom: 16 }}>
+              Triggers a full server backup. The backup file will be saved to Mealie's data directory.
+            </div>
+            <button className="btn-primary" style={{ padding: "10px 24px" }} onClick={runBackup} disabled={backupRunning}>
+              {backupRunning ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={14} /> Running…</span> : "🗄 Create Backup Now"}
+            </button>
+          </div>
+          <div className="card" style={{ background: `${C.yellow}0d`, border: `1px solid ${C.yellow}33` }}>
+            <div style={{ fontWeight: 600, color: C.yellow, marginBottom: 6 }}>⚠ Restore</div>
+            <div style={{ fontSize: 13, color: C.muted }}>
+              To restore from a backup, use the Mealie admin panel directly at your Mealie URL → Admin → Backups.
+              Restore requires file access that PowerTools cannot provide securely via the API.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create user modal */}
+      {creating && (
+        <div style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div className="card fade-up" style={{ width: 460 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
+              <div style={{ fontWeight: 600 }}>Create New User</div>
+              <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={() => setCreating(false)}>
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                { label: "Full Name", key: "fullName", placeholder: "Jane Smith" },
+                { label: "Username", key: "username", placeholder: "janesmith" },
+                { label: "Email", key: "email", placeholder: "jane@example.com", type: "email" },
+                { label: "Password", key: "password", placeholder: "••••••••", type: "password" },
+              ].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 5 }}>{f.label}</label>
+                  <input type={f.type || "text"} placeholder={f.placeholder}
+                    value={newUser[f.key]} onChange={e => setNewUser(u => ({ ...u, [f.key]: e.target.value }))} />
+                </div>
+              ))}
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" checked={newUser.admin}
+                  onChange={e => setNewUser(u => ({ ...u, admin: e.target.checked }))} />
+                Make admin
+              </label>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                <button className="btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
+                <button className="btn-primary" onClick={createUser} disabled={saving || !newUser.username || !newUser.email || !newUser.password}>
+                  {saving ? <Spinner size={13} /> : "Create User"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SECTION: Image Manager ────────────────────────────────────────────────────
+function ImageSection({ api, addLog }) {
+  const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState("missing");
+  const [fetchUrl, setFetchUrl] = useState({});
+  const [fetching, setFetching] = useState({});
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        let all = [], page = 1;
+        while (true) {
+          const d = await api.get(`/recipes?page=${page}&perPage=100`);
+          all = [...all, ...(d.items || [])];
+          if (all.length >= d.total) break;
+          page++;
+        }
+        setRecipes(all);
+      } catch (e) { addLog("error", e.message); }
+      setLoading(false);
+    })();
+  }, [api]);
+
+  const fetchImage = async (slug) => {
+    const url = fetchUrl[slug];
+    if (!url) return;
+    setFetching(f => ({ ...f, [slug]: true }));
+    try {
+      await api.post(`/recipes/${slug}/image`, { url, fileName: "original" });
+      addLog("ok", `Image set for: ${slug}`);
+      setRecipes(r => r.map(x => x.slug === slug ? { ...x, image: url } : x));
+    } catch (e) { addLog("error", `Image fetch failed for ${slug}: ${e.message}`); }
+    setFetching(f => ({ ...f, [slug]: false }));
+  };
+
+  const missing = recipes.filter(r => !r.image);
+  const hasImage = recipes.filter(r => r.image);
+  const displayed = filter === "missing" ? missing : filter === "has" ? hasImage : recipes;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <StatCard label="Total Recipes" value={recipes.length} accent={C.accent} />
+        <StatCard label="Missing Image" value={missing.length} accent={missing.length > 0 ? C.red : C.green} />
+        <StatCard label="Has Image" value={hasImage.length} accent={C.green} />
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        {[["missing", "Missing Images"], ["has", "Has Images"], ["all", "All Recipes"]].map(([v, l]) => (
+          <button key={v} onClick={() => setFilter(v)} style={{
+            padding: "7px 16px", borderRadius: 8, border: `2px solid`,
+            borderColor: filter === v ? C.accent : C.border,
+            background: filter === v ? `${C.accent}18` : C.surfaceAlt,
+            color: filter === v ? C.accent : C.muted,
+            fontWeight: 600, fontSize: 12, cursor: "pointer",
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {loading ? <div style={{ textAlign: "center", padding: 60 }}><Spinner size={32} /></div> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {displayed.map(r => (
+            <div key={r.id} className="card" style={{ display: "flex", gap: 14, alignItems: "center", padding: 14 }}>
+              <div style={{
+                width: 60, height: 60, borderRadius: 10, flexShrink: 0, overflow: "hidden",
+                background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                {r.image
+                  ? <img src={`${api._base}/api/media/recipes/${r.id}/images/min-original.webp`}
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      onError={e => e.target.style.display = "none"} />
+                  : <span style={{ fontSize: 24 }}>🍽️</span>
+                }
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 500, marginBottom: 6 }}>{r.name}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input placeholder="Image URL…" value={fetchUrl[r.slug] || ""}
+                    onChange={e => setFetchUrl(f => ({ ...f, [r.slug]: e.target.value }))}
+                    style={{ flex: 1, fontSize: 12, padding: "5px 10px" }} />
+                  <button className="btn-success" style={{ fontSize: 12, padding: "5px 12px" }}
+                    onClick={() => fetchImage(r.slug)} disabled={!fetchUrl[r.slug] || fetching[r.slug]}>
+                    {fetching[r.slug] ? <Spinner size={12} /> : "Set Image"}
+                  </button>
+                </div>
+              </div>
+              <span className={`tag ${r.image ? "tag-green" : "tag-red"}`}>
+                {r.image ? "✓" : "✗"}
+              </span>
+            </div>
+          ))}
+          {displayed.length === 0 && (
+            <div style={{ textAlign: "center", padding: 40, color: C.muted }}>
+              {filter === "missing" ? "🎉 All recipes have images!" : "No recipes found."}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SECTION: Activity Feed ────────────────────────────────────────────────────
+function ActivitySection({ api, addLog }) {
+  const [recipes, setRecipes] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [sort, setSort] = useState("dateUpdated");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const d = await api.get(`/recipes?page=1&perPage=50&orderBy=${sort}&orderDirection=desc`);
+        setRecipes(d.items || []);
+      } catch (e) { addLog("error", e.message); }
+      setLoading(false);
+    })();
+  }, [api, sort]);
+
+  const fmt = (dt) => {
+    if (!dt) return "—";
+    const d = new Date(dt);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
+
+  const timeAgo = (dt) => {
+    if (!dt) return "—";
+    const diff = Date.now() - new Date(dt).getTime();
+    const days = Math.floor(diff / 86400000);
+    if (days === 0) return "Today";
+    if (days === 1) return "Yesterday";
+    if (days < 7) return `${days} days ago`;
+    if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+    return `${Math.floor(days / 30)} months ago`;
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <span style={{ fontSize: 13, color: C.muted }}>Sort by:</span>
+        {[["dateUpdated", "Last Modified"], ["dateAdded", "Date Added"], ["lastMade", "Last Cooked"]].map(([v, l]) => (
+          <button key={v} onClick={() => setSort(v)} style={{
+            padding: "6px 14px", borderRadius: 8, border: `2px solid`,
+            borderColor: sort === v ? C.accent : C.border,
+            background: sort === v ? `${C.accent}18` : C.surfaceAlt,
+            color: sort === v ? C.accent : C.muted,
+            fontWeight: 600, fontSize: 12, cursor: "pointer",
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {loading ? <div style={{ textAlign: "center", padding: 60 }}><Spinner size={32} /></div> : (
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Recipe</th>
+                <th>Added</th>
+                <th>Last Modified</th>
+                <th>Last Cooked</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recipes.map(r => (
+                <tr key={r.id}>
+                  <td>
+                    <div style={{ fontWeight: 500 }}>{r.name}</div>
+                    <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                      {(r.recipeCategory || []).slice(0, 2).map(c => (
+                        <span key={c.id} className="tag tag-orange" style={{ marginRight: 3 }}>{c.name}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={{ fontSize: 12, color: C.muted }}>{fmt(r.dateAdded)}</td>
+                  <td>
+                    <div style={{ fontSize: 12 }}>{timeAgo(r.dateUpdated)}</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>{fmt(r.dateUpdated)}</div>
+                  </td>
+                  <td style={{ fontSize: 12, color: r.lastMade ? C.text : C.muted }}>
+                    {r.lastMade ? timeAgo(r.lastMade) : "Never"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
