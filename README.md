@@ -22,8 +22,8 @@ cd mealie-powertools
 docker compose up -d
 ```
 
-- Mealie:      http://localhost:9000
-- PowerTools:  http://localhost:3000
+- Mealie:      http://X.X.X.X:9000
+- PowerTools:  http://X.X.X.X:3000
 
 Default Mealie login: `changeme@example.com` / `MyPassword`
 
@@ -43,7 +43,7 @@ Default Mealie login: `changeme@example.com` / `MyPassword`
    docker compose -f docker-compose.attach.yml up -d
    ```
 
-- PowerTools:  http://localhost:3000
+- PowerTools:  http://X.X.X.X:3000
 
 ---
 
@@ -55,8 +55,7 @@ Default Mealie login: `changeme@example.com` / `MyPassword`
 4. Paste it into the PowerTools connection screen
 
 In the **Mealie URL** field, use:
-- `http://mealie:9000` — if running in the same Docker network (recommended)
-- `http://localhost:9000` — if accessing from outside Docker
+- `http://<mealie IP>:9925/api`
 
 ---
 
@@ -67,7 +66,7 @@ npm install
 npm run dev
 ```
 
-App runs at http://localhost:3000
+App runs at http://X.X.X.X:3000
 
 ---
 
