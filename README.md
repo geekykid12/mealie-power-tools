@@ -28,9 +28,13 @@ A self-hosted admin dashboard for your [Mealie](https://github.com/mealie-recipe
 
 ---
 
-## Quick Start
+## Installation
 
-### Option 1 — Docker Run
+There are three ways to run PowerTools depending on your setup.
+
+### Option 1 — Docker Run (simplest)
+
+No compose file needed. Just pull and run:
 
 ```bash
 docker run -d \
@@ -40,43 +44,69 @@ docker run -d \
   ghcr.io/geekykid12/mealie-powertools:latest
 ```
 
-Then open `http://<your-server-ip>:3000` in your browser.
+Open `http://<your-server-ip>:3000` in your browser.
 
-### Option 2 — Docker Compose (alongside existing Mealie)
+> This works regardless of how Mealie is running. PowerTools doesn't need to be on the same Docker network as Mealie — it proxies API calls server-side using whatever URL you enter in the connection screen.
 
-Create a `docker-compose.yml`:
+---
 
-```yaml
-services:
-  powertools:
-    image: ghcr.io/geekykid12/mealie-powertools:latest
-    container_name: mealie-powertools
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    networks:
-      - mealie_default   # replace with your Mealie network name
+### Option 2 — Docker Compose, attach to existing Mealie (recommended)
 
-networks:
-  mealie_default:
-    external: true
+Use this if Mealie is already running. Putting PowerTools on the same Docker network as Mealie lets you use the internal container hostname instead of an IP address.
+
+**1. Clone the repo:**
+```bash
+git clone https://github.com/geekykid12/mealie-powertools.git
+cd mealie-powertools
 ```
 
-Find your Mealie network name:
+**2. Find your Mealie network name:**
 ```bash
 docker inspect mealie --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'
 ```
 
-Then start it:
+**3. Edit `docker-compose.attach.yml`** — replace `mealie_default` with your network name (it appears twice in the file).
+
+**4. Start PowerTools:**
 ```bash
+docker compose -f docker-compose.attach.yml up -d
+```
+
+PowerTools starts on port 3000. In the connection screen, use `http://mealie:9000/api` as the Mealie URL (internal hostname) or `http://<mealie-ip>:<port>/api` if you prefer the IP.
+
+---
+
+### Option 3 — Docker Compose, fresh install (Mealie + PowerTools together)
+
+Use this if you don't have Mealie running yet and want to start both together.
+
+> **Important:** The directory must be named `mealie-power-tools` (with hyphens) to avoid Docker project name conflicts.
+
+```bash
+git clone https://github.com/geekykid12/mealie-powertools.git mealie-power-tools
+cd mealie-power-tools
 docker compose up -d
 ```
 
-### Updating to the latest release
+This starts both Mealie (port 9000) and PowerTools (port 3000). Default Mealie login: `changeme@example.com` / `MyPassword`.
+
+In the PowerTools connection screen, use `http://mealie:9000/api` as the Mealie URL.
+
+---
+
+## Updating
 
 ```bash
 docker pull ghcr.io/geekykid12/mealie-powertools:latest
-docker compose up -d   # or: docker stop mealie-powertools && docker run ...
+docker compose -f docker-compose.attach.yml up -d   # restarts with new image
+```
+
+Or for Docker Run:
+```bash
+docker pull ghcr.io/geekykid12/mealie-powertools:latest
+docker stop mealie-powertools && docker rm mealie-powertools
+docker run -d --name mealie-powertools --restart unless-stopped -p 3000:3000 \
+  ghcr.io/geekykid12/mealie-powertools:latest
 ```
 
 ---
@@ -84,24 +114,14 @@ docker compose up -d   # or: docker stop mealie-powertools && docker run ...
 ## Connecting to Mealie
 
 1. Open PowerTools at `http://<your-server-ip>:3000`
-2. Enter your Mealie URL in the format: `http://<mealie-ip>:<port>/api`
-   - Example: `http://192.168.1.154:9925/api`
+2. Enter your Mealie URL — format: `http://<mealie-ip>:<port>/api`
+   - Same Docker network: `http://mealie:9000/api`
+   - Different machine or reverse proxy: `http://192.168.1.154:9925/api`
 3. Enter your Mealie API token
    - Generate one in Mealie → Profile → API Tokens
-   - Admin token recommended for full PowerTools access
+   - An admin token is recommended for full PowerTools access
 
-> **Note:** PowerTools runs a proxy server internally, so your browser never makes direct requests to Mealie. This means there are no CORS issues regardless of where each service is hosted.
-
----
-
-## Network Setup
-
-PowerTools is accessed via your **server's IP address** on port 3000:
-```
-http://<powertools-server-ip>:3000
-```
-
-The Mealie URL you enter can be on the same machine or a different one on your network. Both work fine.
+> **How it works:** PowerTools runs a proxy server internally. Your browser talks to PowerTools on port 3000, and PowerTools forwards API calls to Mealie server-side. This means there are no CORS issues regardless of where each service is hosted, and you never need to expose the Mealie API port directly to your browser.
 
 ---
 
