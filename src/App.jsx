@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
+// ─── Version ─────────────────────────────────────────────────────────────────
+const VERSION = "1.0.0";
+
 // ─── Design tokens ───────────────────────────────────────────────────────────
 const C = {
   bg: "#0d0f14",
@@ -321,15 +324,16 @@ function LogPanel({ logs }) {
 }
 
 // ─── SECTION: Recipes ─────────────────────────────────────────────────────────
-function RecipesSection({ api, addLog }) {
-  const [recipes, setRecipes] = useState(null);
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
+function RecipesSection({ api, addLog, cache, onCache }) {
+  const [recipes, setRecipes] = useState(cache?.recipes || null);
+  const [search, setSearch] = useState(cache?.search || "");
+  const [page, setPage] = useState(cache?.page || 1);
+  const [total, setTotal] = useState(cache?.total || 0);
   const [loading, setLoading] = useState(false);
   const [editRecipe, setEditRecipe] = useState(null);
-  const [editFull, setEditFull] = useState(null);   // full recipe detail
+  const [editFull, setEditFull] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [parsingSlug, setParsingSlug] = useState(null);
   const PER = 20;
 
   const load = useCallback(async (p = 1, q = "") => {
@@ -338,18 +342,18 @@ function RecipesSection({ api, addLog }) {
       const params = new URLSearchParams({ page: p, perPage: PER, ...(q ? { search: q } : {}) });
       const data = await api.get(`/recipes?${params}`);
       const items = data.items || [];
-      // Fetch full details in parallel (for ingredient parsed status)
       const full = await Promise.all(
         items.map(r => api.get(`/recipes/${r.slug}`).catch(() => r))
       );
       setRecipes(full);
       setTotal(data.total || 0);
       setPage(p);
+      onCache({ recipes: full, total: data.total || 0, page: p, search: q });
     } catch (e) { addLog("error", `Load recipes: ${e.message}`); }
     setLoading(false);
   }, [api]);
 
-  useEffect(() => { load(1, ""); }, [load]);
+  useEffect(() => { if (!cache?.recipes) load(1, ""); }, [load]);
 
   const del = async (slug, name) => {
     if (!confirm(`Delete "${name}"?`)) return;
@@ -427,7 +431,6 @@ function RecipesSection({ api, addLog }) {
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Slug</th>
                 <th>Categories</th>
                 <th>Ingredients</th>
                 <th>Actions</th>
@@ -437,7 +440,6 @@ function RecipesSection({ api, addLog }) {
               {(recipes || []).map(r => (
                 <tr key={r.id}>
                   <td style={{ fontWeight: 500 }}>{r.name}</td>
-                  <td><span className="mono" style={{ fontSize: 11, color: C.muted }}>{r.slug}</span></td>
                   <td>
                     {(r.recipeCategory || []).slice(0, 3).map(c => (
                       <span key={c.id} className="tag tag-orange" style={{ marginRight: 4 }}>{c.name}</span>
@@ -460,6 +462,41 @@ function RecipesSection({ api, addLog }) {
                   <td>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button className="btn-ghost" style={{ padding: "5px 10px" }}
+                        title="Run ingredient parser"
+                        disabled={parsingSlug === r.slug}
+                        onClick={async () => {
+                          setParsingSlug(r.slug);
+                          try {
+                            const full = await api.get(`/recipes/${r.slug}`);
+                            const ings = (full.recipeIngredient || []).map(i => i.display || i.note || "");
+                            if (ings.length) {
+                              const parsed = await api.post("/parser/ingredients", {
+                                ingredients: ings.map(i => ({ ingredient: i })), parser: "nlp"
+                              });
+                              const updated = full.recipeIngredient.map((ing, idx) => ({
+                                ...ing, ...(parsed[idx] ? {
+                                  food: parsed[idx].ingredient?.food,
+                                  unit: parsed[idx].ingredient?.unit,
+                                  quantity: parsed[idx].ingredient?.quantity,
+                                } : {})
+                              }));
+                              await api.patch(`/recipes/${r.slug}`, {
+                                recipeIngredient: updated.map(ing => ({
+                                  ...ing,
+                                  food: ing.food ? { id: ing.food.id, name: ing.food.name } : null,
+                                  unit: ing.unit ? { id: ing.unit.id, name: ing.unit.name } : null,
+                                }))
+                              });
+                              addLog("ok", `Parsed: ${r.name}`);
+                              load(page, search);
+                            }
+                          } catch(e) { addLog("error", e.message); }
+                          setParsingSlug(null);
+                        }}>
+                        {parsingSlug === r.slug ? <Spinner size={13} /> : <Icon name="parse" size={13} />}
+                      </button>
+                      <button className="btn-ghost" style={{ padding: "5px 10px" }}
+                        title="Edit recipe"
                         onClick={() => openEdit(r)}>
                         <Icon name="edit" size={13} />
                       </button>
@@ -563,23 +600,41 @@ function RecipesSection({ api, addLog }) {
                     <label style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>
                       Ingredients ({(editFull.recipeIngredient || []).length})
                     </label>
-                    <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }} onClick={() =>
-                      setField("recipeIngredient", [...(editFull.recipeIngredient || []), { note: "", display: "", quantity: null, unit: null, food: null, title: "", referenceId: crypto.randomUUID() }])
-                    }>+ Add</button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }} onClick={() =>
+                        setField("recipeIngredient", [...(editFull.recipeIngredient || []), { note: "", display: "", quantity: null, unit: null, food: null, title: "", referenceId: crypto.randomUUID() }])
+                      }>+ Ingredient</button>
+                      <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px", color: C.blue, borderColor: C.blue + "66" }} onClick={() =>
+                        setField("recipeIngredient", [...(editFull.recipeIngredient || []), { note: "", display: "", quantity: null, unit: null, food: null, title: "Section Header", isHeader: true, referenceId: crypto.randomUUID() }])
+                      }>+ Header</button>
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                     {(editFull.recipeIngredient || []).map((ing, idx) => (
                       <div key={ing.referenceId || idx} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <div style={{
-                          width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                          background: (ing.food || ing.unit) ? C.green : C.red,
-                        }} />
-                        <input style={{ flex: 1 }} value={ing.display || ing.note || ""}
-                          onChange={e => {
-                            const updated = [...editFull.recipeIngredient];
-                            updated[idx] = { ...ing, display: e.target.value, note: e.target.value };
-                            setField("recipeIngredient", updated);
-                          }} />
+                        {ing.isHeader || ing.title ? (
+                          <>
+                            <div style={{ fontSize: 10, color: C.blue, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0 }}>§</div>
+                            <input style={{ flex: 1, fontWeight: 600, color: C.blue, borderColor: C.blue + "44", background: C.blue + "0a" }}
+                              placeholder="Section header…"
+                              value={ing.title || ""}
+                              onChange={e => {
+                                const updated = [...editFull.recipeIngredient];
+                                updated[idx] = { ...ing, title: e.target.value, display: "", note: "" };
+                                setField("recipeIngredient", updated);
+                              }} />
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: (ing.food || ing.unit) ? C.green : C.red }} />
+                            <input style={{ flex: 1 }} value={ing.display || ing.note || ""}
+                              onChange={e => {
+                                const updated = [...editFull.recipeIngredient];
+                                updated[idx] = { ...ing, display: e.target.value, note: e.target.value };
+                                setField("recipeIngredient", updated);
+                              }} />
+                          </>
+                        )}
                         <button className="btn-danger" style={{ padding: "4px 8px", flexShrink: 0 }}
                           onClick={() => setField("recipeIngredient", editFull.recipeIngredient.filter((_, i) => i !== idx))}>
                           <Icon name="trash" size={12} />
@@ -593,33 +648,61 @@ function RecipesSection({ api, addLog }) {
                 <div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                     <label style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em" }}>
-                      Instructions ({(editFull.recipeInstructions || []).length} steps)
+                      Instructions ({(editFull.recipeInstructions || []).filter(s => !s.isHeader && s.text).length} steps)
                     </label>
-                    <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }} onClick={() =>
-                      setField("recipeInstructions", [...(editFull.recipeInstructions || []), { text: "", title: "", id: crypto.randomUUID() }])
-                    }>+ Add Step</button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }} onClick={() =>
+                        setField("recipeInstructions", [...(editFull.recipeInstructions || []), { text: "", title: "", id: crypto.randomUUID() }])
+                      }>+ Step</button>
+                      <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px", color: C.blue, borderColor: C.blue + "66" }} onClick={() =>
+                        setField("recipeInstructions", [...(editFull.recipeInstructions || []), { text: "", title: "Section Header", isHeader: true, id: crypto.randomUUID() }])
+                      }>+ Header</button>
+                    </div>
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {(editFull.recipeInstructions || []).map((step, idx) => (
-                      <div key={step.id || idx} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                        <div style={{
-                          width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
-                          background: C.surfaceAlt, border: `1px solid ${C.border}`,
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                          fontSize: 11, color: C.muted, marginTop: 6,
-                        }}>{idx + 1}</div>
-                        <textarea style={{ flex: 1 }} rows={2} value={step.text || ""}
-                          onChange={e => {
-                            const updated = [...editFull.recipeInstructions];
-                            updated[idx] = { ...step, text: e.target.value };
-                            setField("recipeInstructions", updated);
-                          }} />
-                        <button className="btn-danger" style={{ padding: "4px 8px", flexShrink: 0, marginTop: 4 }}
-                          onClick={() => setField("recipeInstructions", editFull.recipeInstructions.filter((_, i) => i !== idx))}>
-                          <Icon name="trash" size={12} />
-                        </button>
-                      </div>
-                    ))}
+                    {(() => {
+                      let stepNum = 0;
+                      return (editFull.recipeInstructions || []).map((step, idx) => {
+                        const isHeader = step.isHeader || (!step.text && step.title && !(editFull.recipeInstructions[idx - 1]?.text));
+                        if (!isHeader) stepNum++;
+                        return (
+                          <div key={step.id || idx} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                            {isHeader ? (
+                              <>
+                                <div style={{ fontSize: 10, color: C.blue, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0, marginTop: 8 }}>§</div>
+                                <input style={{ flex: 1, fontWeight: 600, color: C.blue, borderColor: C.blue + "44", background: C.blue + "0a" }}
+                                  placeholder="Section header…"
+                                  value={step.title || ""}
+                                  onChange={e => {
+                                    const updated = [...editFull.recipeInstructions];
+                                    updated[idx] = { ...step, title: e.target.value, text: "" };
+                                    setField("recipeInstructions", updated);
+                                  }} />
+                              </>
+                            ) : (
+                              <>
+                                <div style={{
+                                  width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                                  background: C.surfaceAlt, border: `1px solid ${C.border}`,
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontSize: 11, color: C.muted, marginTop: 6,
+                                }}>{stepNum}</div>
+                                <textarea style={{ flex: 1 }} rows={2} value={step.text || ""}
+                                  onChange={e => {
+                                    const updated = [...editFull.recipeInstructions];
+                                    updated[idx] = { ...step, text: e.target.value };
+                                    setField("recipeInstructions", updated);
+                                  }} />
+                              </>
+                            )}
+                            <button className="btn-danger" style={{ padding: "4px 8px", flexShrink: 0, marginTop: 4 }}
+                              onClick={() => setField("recipeInstructions", editFull.recipeInstructions.filter((_, i) => i !== idx))}>
+                              <Icon name="trash" size={12} />
+                            </button>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
 
@@ -664,13 +747,20 @@ function RecipesSection({ api, addLog }) {
 
 // ─── SECTION: Ingredient Parser ───────────────────────────────────────────────
 function ParserSection({ api, addLog }) {
-  const [mode, setMode] = useState("unparsed"); // "unparsed" | "all"
+  const [mode, setMode] = useState("unparsed");
+  const [reviewMode, setReviewMode] = useState(true); // show review step before saving
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [logs, setLogs] = useState([]);
-  const [batchSize, setBatchSize] = useState(10);
   const [parser, setParser] = useState("nlp");
+  const [batchSize, setBatchSize] = useState(10);
   const abortRef = useRef(false);
+
+  // Review state
+  const [reviewItems, setReviewItems] = useState([]); // [{recipe, original, parsed, approved}]
+  const [reviewing, setReviewing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState({ done: 0, total: 0 });
 
   const addParserLog = (type, msg) => {
     const ts = new Date().toLocaleTimeString();
@@ -689,79 +779,279 @@ function ParserSection({ api, addLog }) {
     return all;
   };
 
-  // A recipe needs parsing if ANY ingredient is missing both food AND unit objects
-  // (parsed ingredients always have at least one of these populated)
   const needsParsing = (recipe) => {
     const ings = recipe.recipeIngredient || [];
     if (ings.length === 0) return false;
     return ings.some(ing => !ing.food && !ing.unit);
   };
 
-  // Count parsed vs unparsed ingredients in a recipe
-  const parsedCount = (recipe) => {
-    const ings = recipe.recipeIngredient || [];
-    const parsed = ings.filter(ing => ing.food || ing.unit).length;
-    return { parsed, total: ings.length };
-  };
-
-  const parseRecipe = async (slug) => {
-    const recipe = await api.get(`/recipes/${slug}`);
+  const callParser = async (recipe) => {
     const ingredients = (recipe.recipeIngredient || []).map(i => i.display || i.note || "");
-    if (!ingredients.length) return false;
+    if (!ingredients.length) return null;
     const parsed = await api.post("/parser/ingredients", {
       ingredients: ingredients.map(i => ({ ingredient: i })),
       parser,
     });
-    const updated = recipe.recipeIngredient.map((ing, idx) => ({
+    return parsed;
+  };
+
+  const buildUpdated = (recipe, parsed) =>
+    recipe.recipeIngredient.map((ing, idx) => ({
       ...ing, ...(parsed[idx] ? {
         food: parsed[idx].ingredient?.food,
         unit: parsed[idx].ingredient?.unit,
         quantity: parsed[idx].ingredient?.quantity,
       } : {}),
     }));
-    await api.patch(`/recipes/${slug}`, { recipeIngredient: updated });
-    return true;
+
+  const saveRecipe = async (recipe, updatedIngredients) => {
+    await api.patch(`/recipes/${recipe.slug}`, {
+      recipeIngredient: updatedIngredients.map(ing => ({
+        ...ing,
+        food: ing.food ? { id: ing.food.id, name: ing.food.name } : null,
+        unit: ing.unit ? { id: ing.unit.id, name: ing.unit.name } : null,
+      })),
+    });
   };
 
   const run = async () => {
     abortRef.current = false;
     setRunning(true); setLogs([]); setProgress({ done: 0, total: 0 });
-    addParserLog("info", `Starting ${mode === "all" ? "full" : "unparsed"} ingredient parse with ${parser} parser…`);
+    setReviewItems([]);
+
+    addParserLog("info", `Starting parse (${parser} engine, ${reviewMode ? "review mode" : "auto-save"})…`);
 
     try {
       const allRecipes = await getAllRecipes();
-      addParserLog("info", `Found ${allRecipes.length} total recipes`);
+      // Need full recipe details for ingredient list
+      addParserLog("info", `Fetching full details for ${allRecipes.length} recipes…`);
+      const fullRecipes = await Promise.all(
+        allRecipes.map(r => api.get(`/recipes/${r.slug}`).catch(() => r))
+      );
 
       const targets = mode === "all"
-        ? allRecipes
-        : allRecipes.filter(r => needsParsing(r));
+        ? fullRecipes
+        : fullRecipes.filter(r => needsParsing(r));
 
-      addParserLog("info", `${targets.length} recipes queued for parsing`);
+      addParserLog("info", `${targets.length} recipes queued`);
       setProgress({ done: 0, total: targets.length });
 
+      const collected = [];
+
       for (let i = 0; i < targets.length; i += batchSize) {
-        if (abortRef.current) { addParserLog("warn", "Aborted by user"); break; }
+        if (abortRef.current) { addParserLog("warn", "Aborted"); break; }
         const batch = targets.slice(i, i + batchSize);
-        await Promise.all(batch.map(async r => {
+
+        await Promise.all(batch.map(async recipe => {
           try {
-            await parseRecipe(r.slug);
-            addParserLog("ok", `✓ ${r.name}`);
+            const parsed = await callParser(recipe);
+            if (!parsed) return;
+
+            if (reviewMode) {
+              // Collect for review — pair each original ingredient with its parse result
+              const items = recipe.recipeIngredient.map((ing, idx) => {
+                const p = parsed[idx]?.ingredient;
+                const hasResult = p?.food || p?.unit;
+                const changed = hasResult && (
+                  (p?.food?.name !== ing.food?.name) ||
+                  (p?.unit?.name !== ing.unit?.name) ||
+                  (p?.quantity !== ing.quantity && p?.quantity != null)
+                );
+                return {
+                  original: { display: ing.display || ing.note || "", food: ing.food?.name, unit: ing.unit?.name, qty: ing.quantity },
+                  parsed: p ? { food: p.food?.name, unit: p.unit?.name, qty: p.quantity } : null,
+                  changed,
+                  approved: changed, // default approve changed ones
+                  parsedRaw: parsed[idx],
+                  ingRaw: ing,
+                };
+              });
+              collected.push({ recipe, items, allUpdated: buildUpdated(recipe, parsed) });
+              addParserLog("ok", `✓ ${recipe.name} — ${items.filter(i => i.changed).length}/${items.length} changed`);
+            } else {
+              // Auto-save immediately
+              await saveRecipe(recipe, buildUpdated(recipe, parsed));
+              addParserLog("ok", `✓ Saved: ${recipe.name}`);
+            }
           } catch (e) {
-            addParserLog("error", `✗ ${r.name}: ${e.message}`);
+            addParserLog("error", `✗ ${recipe.name}: ${e.message}`);
           }
         }));
+
         setProgress({ done: Math.min(i + batchSize, targets.length), total: targets.length });
       }
 
-      addParserLog("ok", `Parse complete!`);
+      if (reviewMode && collected.length > 0) {
+        setReviewItems(collected);
+        setReviewing(true);
+        addParserLog("info", `Ready to review ${collected.length} recipes`);
+      } else {
+        addParserLog("ok", "Parse complete!");
+      }
     } catch (e) {
       addParserLog("error", `Fatal: ${e.message}`);
     }
     setRunning(false);
   };
 
-  const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+  const saveApproved = async () => {
+    setSaving(true);
+    setSaveProgress({ done: 0, total: reviewItems.length });
+    let saved = 0, skipped = 0;
 
+    for (const item of reviewItems) {
+      try {
+        // Build updated ingredients respecting per-ingredient approval
+        const updatedIngredients = item.recipe.recipeIngredient.map((ing, idx) => {
+          const reviewIng = item.items[idx];
+          if (!reviewIng || !reviewIng.approved || !reviewIng.parsedRaw) return ing;
+          const p = reviewIng.parsedRaw.ingredient;
+          return {
+            ...ing,
+            food: p?.food || ing.food,
+            unit: p?.unit || ing.unit,
+            quantity: p?.quantity ?? ing.quantity,
+          };
+        });
+        const anyApproved = item.items.some(i => i.approved);
+        if (anyApproved) {
+          await saveRecipe(item.recipe, updatedIngredients);
+          addParserLog("ok", `Saved: ${item.recipe.name}`);
+          saved++;
+        } else {
+          skipped++;
+        }
+      } catch (e) {
+        addParserLog("error", `${item.recipe.name}: ${e.message}`);
+      }
+      setSaveProgress(p => ({ ...p, done: p.done + 1 }));
+    }
+
+    addParserLog("ok", `Done — ${saved} saved, ${skipped} skipped`);
+    setSaving(false);
+    setReviewing(false);
+    setReviewItems([]);
+  };
+
+  const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
+  const savePct = saveProgress.total ? Math.round((saveProgress.done / saveProgress.total) * 100) : 0;
+
+  // ── Review Modal ─────────────────────────────────────────────────────────────
+  if (reviewing && reviewItems.length > 0) {
+    const totalChanged = reviewItems.reduce((s, r) => s + r.items.filter(i => i.changed).length, 0);
+    const totalApproved = reviewItems.reduce((s, r) => s + r.items.filter(i => i.approved).length, 0);
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Header */}
+        <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>Review Parse Results</div>
+            <div style={{ fontSize: 13, color: C.muted, marginTop: 4 }}>
+              {reviewItems.length} recipes · {totalChanged} ingredients changed · {totalApproved} approved
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="btn-ghost" onClick={() => {
+              // Approve all
+              setReviewItems(items => items.map(r => ({
+                ...r, items: r.items.map(i => ({ ...i, approved: i.changed }))
+              })));
+            }}>✓ Approve All Changed</button>
+            <button className="btn-ghost" onClick={() => {
+              setReviewItems(items => items.map(r => ({
+                ...r, items: r.items.map(i => ({ ...i, approved: false }))
+              })));
+            }}>✗ Reject All</button>
+            <button className="btn-ghost" onClick={() => { setReviewing(false); setReviewItems([]); }}>
+              Cancel
+            </button>
+            <button className="btn-primary" style={{ padding: "8px 20px" }}
+              onClick={saveApproved} disabled={saving || totalApproved === 0}>
+              {saving
+                ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={13} /> {savePct}%</span>
+                : `💾 Save ${totalApproved} Changes`}
+            </button>
+          </div>
+        </div>
+
+        {/* Per-recipe review cards */}
+        {reviewItems.map((item, rIdx) => {
+          const changedCount = item.items.filter(i => i.changed).length;
+          const approvedCount = item.items.filter(i => i.approved).length;
+          if (changedCount === 0) return null; // skip recipes with no changes
+
+          return (
+            <div key={item.recipe.id} className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
+                display: "flex", justifyContent: "space-between", alignItems: "center", background: C.surfaceAlt }}>
+                <div style={{ fontWeight: 600 }}>{item.recipe.name}</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span className="tag tag-orange">{changedCount} changed</span>
+                  <span className="tag tag-green">{approvedCount} approved</span>
+                  <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }}
+                    onClick={() => setReviewItems(items => items.map((r, ri) => ri !== rIdx ? r : {
+                      ...r, items: r.items.map(i => ({ ...i, approved: i.changed }))
+                    }))}>Approve all</button>
+                  <button className="btn-ghost" style={{ fontSize: 11, padding: "3px 10px" }}
+                    onClick={() => setReviewItems(items => items.map((r, ri) => ri !== rIdx ? r : {
+                      ...r, items: r.items.map(i => ({ ...i, approved: false }))
+                    }))}>Reject all</button>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 36 }}>✓</th>
+                    <th>Original Text</th>
+                    <th>Was</th>
+                    <th>Now Detected</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {item.items.map((ing, iIdx) => {
+                    if (!ing.changed && !ing.parsed) return null;
+                    return (
+                      <tr key={iIdx} style={{ background: ing.approved ? `${C.green}08` : undefined }}>
+                        <td>
+                          <input type="checkbox" checked={!!ing.approved}
+                            onChange={e => setReviewItems(items => items.map((r, ri) => ri !== rIdx ? r : {
+                              ...r, items: r.items.map((x, xi) => xi !== iIdx ? x : { ...x, approved: e.target.checked })
+                            }))} />
+                        </td>
+                        <td style={{ fontSize: 12 }}>{ing.original.display || "—"}</td>
+                        <td style={{ fontSize: 11, color: C.muted }}>
+                          {[ing.original.qty, ing.original.unit, ing.original.food].filter(Boolean).join(" ") || "—"}
+                        </td>
+                        <td style={{ fontSize: 11 }}>
+                          {ing.parsed ? (
+                            <span style={{ color: C.green }}>
+                              {[ing.parsed.qty, ing.parsed.unit, ing.parsed.food].filter(Boolean).join(" ") || "—"}
+                            </span>
+                          ) : <span style={{ color: C.muted }}>no change</span>}
+                        </td>
+                        <td>
+                          {!ing.changed
+                            ? <span className="tag tag-muted">unchanged</span>
+                            : ing.approved
+                              ? <span className="tag tag-green">✓ approved</span>
+                              : <span className="tag tag-red">✗ rejected</span>
+                          }
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── Main Parser UI ────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div className="card">
@@ -801,12 +1091,39 @@ function ParserSection({ api, addLog }) {
             <input type="number" min={1} max={50} value={batchSize} onChange={e => setBatchSize(+e.target.value)} />
           </div>
         </div>
+
+        {/* Review mode toggle */}
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px solid ${C.border}` }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}>
+            <div style={{
+              width: 40, height: 22, borderRadius: 11, transition: "background .2s",
+              background: reviewMode ? C.accent : C.border, position: "relative",
+              cursor: "pointer",
+            }} onClick={() => setReviewMode(r => !r)}>
+              <div style={{
+                position: "absolute", top: 3, left: reviewMode ? 20 : 3,
+                width: 16, height: 16, borderRadius: "50%", background: "#fff",
+                transition: "left .2s",
+              }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>Review before saving</div>
+              <div style={{ fontSize: 11, color: C.muted }}>
+                {reviewMode
+                  ? "Parser results shown for approval — nothing saved until you confirm"
+                  : "Auto-save mode — results saved immediately without review"}
+              </div>
+            </div>
+          </label>
+        </div>
       </div>
 
       {running && (
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <span style={{ fontWeight: 600 }}>Running… {progress.done}/{progress.total}</span>
+            <span style={{ fontWeight: 600 }}>
+              {reviewMode ? "Parsing for review" : "Parsing & saving"}… {progress.done}/{progress.total}
+            </span>
             <span className="mono" style={{ color: C.accent, fontSize: 18, fontWeight: 700 }}>{pct}%</span>
           </div>
           <div className="progress-bar">
@@ -818,8 +1135,9 @@ function ParserSection({ api, addLog }) {
       <div style={{ display: "flex", gap: 10 }}>
         <button className="btn-primary" style={{ flex: 1, padding: 14, fontSize: 15 }}
           onClick={run} disabled={running}>
-          {running ? <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}><Spinner size={16} /> Parsing…</span>
-            : `▶ Run Parser — ${mode === "all" ? "All Recipes" : "Unparsed Only"}`}
+          {running
+            ? <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}><Spinner size={16} /> Parsing…</span>
+            : `▶ ${reviewMode ? "Parse & Review" : "Parse & Save"} — ${mode === "all" ? "All Recipes" : "Unparsed Only"}`}
         </button>
         {running && (
           <button className="btn-danger" style={{ padding: "14px 20px" }}
@@ -845,26 +1163,81 @@ function HouseholdsSection({ api, addLog }) {
   const [users, setUsers] = useState([]);
   const [selectedHousehold, setSelectedHousehold] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [editUser, setEditUser] = useState(null);
+  const [newUser, setNewUser] = useState({ username: "", email: "", password: "", fullName: "", admin: false });
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        // Use admin endpoints to get everything server-wide
-        const [g, h, u] = await Promise.all([
-          api.get("/admin/groups?perPage=100").catch(() => ({ items: [] })),
-          api.get("/admin/households?perPage=100").catch(() => ({ items: [] })),
-          api.get("/admin/users?perPage=100").catch(() => ({ items: [] })),
-        ]);
-        setGroups(g.items || []);
-        setHouseholds(h.items || []);
-        setUsers(u.items || []);
-        if ((h.items || []).length > 0) setSelectedHousehold(h.items[0]);
-        addLog("ok", `Loaded ${(h.items||[]).length} households, ${(u.items||[]).length} users`);
-      } catch (e) { addLog("error", e.message); }
-      setLoading(false);
-    })();
+  const loadAll = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [g, h, u] = await Promise.all([
+        api.get("/admin/groups?perPage=100").catch(() => ({ items: [] })),
+        api.get("/admin/households?perPage=100").catch(() => ({ items: [] })),
+        api.get("/admin/users?perPage=100").catch(() => ({ items: [] })),
+      ]);
+      setGroups(g.items || []);
+      setHouseholds(h.items || []);
+      setUsers(u.items || []);
+      if ((h.items || []).length > 0 && !selectedHousehold)
+        setSelectedHousehold(h.items[0]);
+      addLog("ok", `Loaded ${(h.items||[]).length} households, ${(u.items||[]).length} users`);
+    } catch (e) { addLog("error", e.message); }
+    setLoading(false);
   }, [api]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  const toggleAdmin = async (user) => {
+    try {
+      await api.put(`/admin/users/${user.id}`, { ...user, admin: !user.admin });
+      setUsers(u => u.map(x => x.id === user.id ? { ...x, admin: !x.admin } : x));
+      addLog("ok", `${user.username} admin: ${!user.admin}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const toggleEnabled = async (user) => {
+    try {
+      await api.put(`/admin/users/${user.id}`, { ...user, enabled: !(user.enabled !== false) });
+      setUsers(u => u.map(x => x.id === user.id ? { ...x, enabled: !(x.enabled !== false) } : x));
+      addLog("ok", `${user.username} ${!(user.enabled !== false) ? "enabled" : "disabled"}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const deleteUser = async (user) => {
+    if (!confirm(`Delete user "${user.username}"? This cannot be undone.`)) return;
+    try {
+      await api.delete(`/admin/users/${user.id}`);
+      setUsers(u => u.filter(x => x.id !== user.id));
+      addLog("ok", `Deleted: ${user.username}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  const createUser = async () => {
+    setSaving(true);
+    try {
+      await api.post("/admin/users", { ...newUser,
+        householdId: selectedHousehold?.id,
+        group: groups.find(g => g.id === selectedHousehold?.groupId)?.name,
+      });
+      addLog("ok", `Created user: ${newUser.username}`);
+      setCreating(false);
+      setNewUser({ username: "", email: "", password: "", fullName: "", admin: false });
+      loadAll();
+    } catch (e) { addLog("error", e.message); }
+    setSaving(false);
+  };
+
+  const saveEditUser = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/admin/users/${editUser.id}`, editUser);
+      setUsers(u => u.map(x => x.id === editUser.id ? editUser : x));
+      addLog("ok", `Updated: ${editUser.username}`);
+      setEditUser(null);
+    } catch (e) { addLog("error", e.message); }
+    setSaving(false);
+  };
 
   if (loading) return <div style={{ textAlign: "center", padding: 60 }}><Spinner size={32} /></div>;
 
@@ -872,23 +1245,22 @@ function HouseholdsSection({ api, addLog }) {
     ? users.filter(u => u.householdId === selectedHousehold.id)
     : users;
 
+  const hColors = [C.accent, C.blue, C.green, "#a855f7", C.yellow];
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* Stats */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
         <StatCard label="Groups" value={groups.length} accent={C.accent} sub="Top-level groups" />
         <StatCard label="Households" value={households.length} accent={C.blue} sub="Across all groups" />
         <StatCard label="Total Users" value={users.length} accent={C.green} sub="Server-wide" />
       </div>
 
-      {/* Household selector + detail */}
       {households.length > 0 && (
         <div style={{ display: "flex", gap: 20 }}>
           {/* Household list */}
           <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Households</div>
             {households.map((h, i) => {
-              const hColors = [C.accent, C.blue, C.green, "#a855f7", C.yellow];
               const color = hColors[i % hColors.length];
               const isSelected = selectedHousehold?.id === h.id;
               const memberCount = users.filter(u => u.householdId === h.id).length;
@@ -913,6 +1285,7 @@ function HouseholdsSection({ api, addLog }) {
           {/* Detail panel */}
           {selectedHousehold && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 14 }} className="fade-up">
+              {/* Household details */}
               <div className="card">
                 <div style={{ fontWeight: 600, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
                   <Icon name="household" size={16} color={C.accent} />
@@ -935,19 +1308,19 @@ function HouseholdsSection({ api, addLog }) {
                 </div>
               </div>
 
+              {/* Members with management */}
               <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-                <div style={{ padding: "14px 16px", fontWeight: 600, display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${C.border}` }}>
-                  <Icon name="household" size={15} color={C.blue} />
-                  Members ({householdUsers.length})
+                <div style={{ padding: "14px 16px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                    <Icon name="household" size={15} color={C.blue} />
+                    Members ({householdUsers.length})
+                  </div>
+                  <button className="btn-primary" style={{ padding: "5px 14px", fontSize: 12 }}
+                    onClick={() => setCreating(true)}>+ Add User</button>
                 </div>
                 <table>
                   <thead>
-                    <tr>
-                      <th>User</th>
-                      <th>Email</th>
-                      <th>Role</th>
-                      <th>Status</th>
-                    </tr>
+                    <tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr>
                   </thead>
                   <tbody>
                     {householdUsers.map(m => (
@@ -955,10 +1328,10 @@ function HouseholdsSection({ api, addLog }) {
                         <td>
                           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                             <div style={{
-                              width: 32, height: 32, borderRadius: "50%",
+                              width: 30, height: 30, borderRadius: "50%",
                               background: `linear-gradient(135deg, ${C.accent}44, ${C.blue}44)`,
                               display: "flex", alignItems: "center", justifyContent: "center",
-                              fontSize: 13, fontWeight: 700, color: C.accent,
+                              fontSize: 12, fontWeight: 700, color: C.accent,
                             }}>{(m.fullName || m.username || "?")[0].toUpperCase()}</div>
                             <div>
                               <div style={{ fontWeight: 500, fontSize: 13 }}>{m.fullName || m.username}</div>
@@ -968,19 +1341,35 @@ function HouseholdsSection({ api, addLog }) {
                         </td>
                         <td style={{ color: C.muted, fontSize: 12 }}>{m.email}</td>
                         <td>
-                          <span className={`tag ${m.admin ? "tag-orange" : "tag-muted"}`}>
+                          <button onClick={() => toggleAdmin(m)}
+                            className={`tag ${m.admin ? "tag-orange" : "tag-muted"}`}
+                            style={{ cursor: "pointer", border: "none" }}>
                             {m.admin ? "admin" : "user"}
-                          </span>
+                          </button>
                         </td>
                         <td>
-                          <span className={`tag ${m.enabled !== false ? "tag-green" : "tag-red"}`}>
+                          <button onClick={() => toggleEnabled(m)}
+                            className={`tag ${m.enabled !== false ? "tag-green" : "tag-red"}`}
+                            style={{ cursor: "pointer", border: "none" }}>
                             {m.enabled !== false ? "active" : "disabled"}
-                          </span>
+                          </button>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            <button className="btn-ghost" style={{ padding: "4px 10px" }}
+                              onClick={() => setEditUser({ ...m })}>
+                              <Icon name="edit" size={13} />
+                            </button>
+                            <button className="btn-danger" style={{ padding: "4px 10px" }}
+                              onClick={() => deleteUser(m)}>
+                              <Icon name="trash" size={13} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
                     {householdUsers.length === 0 && (
-                      <tr><td colSpan={4} style={{ textAlign: "center", color: C.muted, padding: 24 }}>No members</td></tr>
+                      <tr><td colSpan={5} style={{ textAlign: "center", color: C.muted, padding: 24 }}>No members</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -990,56 +1379,87 @@ function HouseholdsSection({ api, addLog }) {
         </div>
       )}
 
-      {/* All users table */}
-      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "14px 16px", fontWeight: 600, display: "flex", alignItems: "center", gap: 8, borderBottom: `1px solid ${C.border}` }}>
-          <Icon name="household" size={15} color={C.green} />
-          All Users — Server Wide ({users.length})
+      {/* Create user modal */}
+      {creating && (
+        <div style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div className="card fade-up" style={{ width: 460 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
+              <div style={{ fontWeight: 600 }}>Add User to {selectedHousehold?.name}</div>
+              <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={() => setCreating(false)}>
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                { label: "Full Name", key: "fullName", placeholder: "Jane Smith" },
+                { label: "Username", key: "username", placeholder: "janesmith" },
+                { label: "Email", key: "email", placeholder: "jane@example.com", type: "email" },
+                { label: "Password", key: "password", placeholder: "••••••••", type: "password" },
+              ].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 5 }}>{f.label}</label>
+                  <input type={f.type || "text"} placeholder={f.placeholder}
+                    value={newUser[f.key]} onChange={e => setNewUser(u => ({ ...u, [f.key]: e.target.value }))} />
+                </div>
+              ))}
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" checked={newUser.admin}
+                  onChange={e => setNewUser(u => ({ ...u, admin: e.target.checked }))} />
+                Make admin
+              </label>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                <button className="btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
+                <button className="btn-primary" onClick={createUser}
+                  disabled={saving || !newUser.username || !newUser.email || !newUser.password}>
+                  {saving ? <Spinner size={13} /> : "Create User"}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>User</th>
-              <th>Email</th>
-              <th>Household</th>
-              <th>Role</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map(m => (
-              <tr key={m.id}>
-                <td>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: "50%",
-                      background: `linear-gradient(135deg, ${C.accent}44, ${C.blue}44)`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 12, fontWeight: 700, color: C.accent,
-                    }}>{(m.fullName || m.username || "?")[0].toUpperCase()}</div>
-                    <div style={{ fontWeight: 500, fontSize: 13 }}>{m.fullName || m.username}</div>
-                  </div>
-                </td>
-                <td style={{ color: C.muted, fontSize: 12 }}>{m.email}</td>
-                <td style={{ fontSize: 12 }}>{m.household || "—"}</td>
-                <td>
-                  <span className={`tag ${m.admin ? "tag-orange" : "tag-muted"}`}>
-                    {m.admin ? "admin" : "user"}
-                  </span>
-                </td>
-                <td>
-                  <span className={`tag ${m.enabled !== false ? "tag-green" : "tag-red"}`}>
-                    {m.enabled !== false ? "active" : "disabled"}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      )}
+
+      {/* Edit user modal */}
+      {editUser && (
+        <div style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div className="card fade-up" style={{ width: 460 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
+              <div style={{ fontWeight: 600 }}>Edit User — {editUser.username}</div>
+              <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={() => setEditUser(null)}>
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                { label: "Full Name", key: "fullName" },
+                { label: "Username", key: "username" },
+                { label: "Email", key: "email", type: "email" },
+              ].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 5 }}>{f.label}</label>
+                  <input type={f.type || "text"} value={editUser[f.key] || ""}
+                    onChange={e => setEditUser(u => ({ ...u, [f.key]: e.target.value }))} />
+                </div>
+              ))}
+              <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!editUser.admin}
+                  onChange={e => setEditUser(u => ({ ...u, admin: e.target.checked }))} />
+                Admin
+              </label>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                <button className="btn-ghost" onClick={() => setEditUser(null)}>Cancel</button>
+                <button className="btn-primary" onClick={saveEditUser} disabled={saving}>
+                  {saving ? <Spinner size={13} /> : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
 
 // ─── SECTION: Cookbooks ───────────────────────────────────────────────────────
 function CookbooksSection({ api, addLog }) {
@@ -1178,7 +1598,7 @@ function CookbooksSection({ api, addLog }) {
                 {cbRecipes.map(r => (
                   <div key={r.id} className="card" style={{ padding: 14 }}>
                     {r.image && (
-                      <img src={`${api._base}/api/media/recipes/${r.id}/images/min-original.webp`}
+                      <img src={`${api._base}/media/recipes/${r.id}/images/min-original.webp`}
                         style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 8, marginBottom: 10 }}
                         onError={e => e.target.style.display = "none"} />
                     )}
@@ -1250,7 +1670,7 @@ function DashboardSection({ api, user, addLog, onNavigate }) {
         const [r, cb, u] = await Promise.all([
           api.get("/recipes?perPage=1"),
           api.get("/households/cookbooks?perPage=100"),
-          api.get("/households/members?perPage=100"),
+          api.get("/admin/users?perPage=100").catch(() => ({ items: [] })),
         ]);
         setStats({
           recipes: r.total,
@@ -1315,7 +1735,7 @@ function DashboardSection({ api, user, addLog, onNavigate }) {
             { icon: "search",    label: "Data Quality",      sub: "Audit your recipe library",  color: "#a855f7",  tab: "quality" },
             { icon: "recipe",    label: "Image Manager",     sub: "Fix missing images",         color: "#ec4899",  tab: "images" },
             { icon: "stats",     label: "Activity",          sub: "Recently added & cooked",    color: C.blue,     tab: "activity" },
-            { icon: "settings",  label: "Admin",             sub: "Users, backups, server",     color: C.red,      tab: "admin" },
+            { icon: "settings",  label: "Admin",             sub: "Users & backups",             color: C.red,      tab: "admin" },
           ].map(a => (
             <div key={a.tab} className="card" style={{
               cursor: "pointer", padding: 16,
@@ -1342,6 +1762,8 @@ export default function App() {
   const [conn, setConn] = useState(null);
   const [tab, setTab] = useState("dashboard");
   const [globalLogs, setGlobalLogs] = useState([]);
+  const [qualityResults, setQualityResults] = useState(null);
+  const [recipeCache, setRecipeCache] = useState(null);
 
   const addLog = useCallback((type, msg) => {
     const ts = new Date().toLocaleTimeString();
@@ -1349,8 +1771,8 @@ export default function App() {
   }, []);
 
   const handleConnect = ({ url, token, user, api }) => {
-    // Attach base URL to api for image loading
     api._base = url;
+    api._token = token;
     setConn({ url, token, user, api });
     addLog("ok", `Connected to ${url} as ${user?.username}`);
   };
@@ -1465,6 +1887,9 @@ export default function App() {
             onClick={() => setConn(null)}>
             Disconnect
           </button>
+          <div style={{ textAlign: "center", marginTop: 10, fontSize: 10, color: C.muted, opacity: .5 }}>
+            v{VERSION}
+          </div>
         </div>
       </div>
 
@@ -1484,12 +1909,12 @@ export default function App() {
           {/* Content */}
           <div className="fade-up">
             {tab === "dashboard"  && <DashboardSection  api={conn.api} user={conn.user} addLog={addLog} onNavigate={setTab} />}
-            {tab === "recipes"    && <RecipesSection    api={conn.api} addLog={addLog} />}
+            {tab === "recipes"    && <RecipesSection    api={conn.api} addLog={addLog} cache={recipeCache} onCache={setRecipeCache} />}
             {tab === "parser"     && <ParserSection     api={conn.api} addLog={addLog} />}
             {tab === "bulk"       && <BulkSection       api={conn.api} addLog={addLog} />}
             {tab === "taxonomy"   && <TaxonomySection   api={conn.api} addLog={addLog} />}
             {tab === "cookbooks"  && <CookbooksSection  api={conn.api} addLog={addLog} />}
-            {tab === "quality"    && <DataQualitySection api={conn.api} addLog={addLog} />}
+            {tab === "quality"    && <DataQualitySection api={conn.api} addLog={addLog} savedResults={qualityResults} onSaveResults={setQualityResults} />}
             {tab === "images"     && <ImageSection      api={conn.api} addLog={addLog} />}
             {tab === "activity"   && <ActivitySection   api={conn.api} addLog={addLog} />}
             {tab === "households" && <HouseholdsSection api={conn.api} addLog={addLog} />}
@@ -1536,8 +1961,8 @@ function BulkSection({ api, addLog }) {
         }
         setRecipes(all);
         const [t, c, cb] = await Promise.all([
-          api.get("/recipes/tags?perPage=500"),
-          api.get("/recipes/categories?perPage=500"),
+          api.get("/organizers/tags?perPage=500"),
+          api.get("/organizers/categories?perPage=500"),
           api.get("/households/cookbooks?perPage=100"),
         ]);
         setTags(t.items || []);
@@ -1685,7 +2110,7 @@ function TaxonomySection({ api, addLog }) {
   const [editName, setEditName] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const endpoint = activeType === "tags" ? "/recipes/tags" : "/recipes/categories";
+  const endpoint = activeType === "tags" ? "/organizers/tags" : "/organizers/categories";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1856,18 +2281,19 @@ function TaxonomySection({ api, addLog }) {
 }
 
 // ─── SECTION: Data Quality ─────────────────────────────────────────────────────
-function DataQualitySection({ api, addLog }) {
+function DataQualitySection({ api, addLog, savedResults, onSaveResults }) {
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState(null);
+  const [results, setResults] = useState(savedResults || null);
   const [checking, setChecking] = useState("");
+  const [expanded, setExpanded] = useState({});
+  const sectionRefs = useRef({});
 
   const runAudit = async () => {
     setLoading(true);
     setResults(null);
+    setExpanded({});
     addLog("info", "Starting data quality audit…");
-
     try {
-      // Fetch all recipes with full detail
       let all = [], page = 1;
       while (true) {
         setChecking(`Loading recipes (page ${page})…`);
@@ -1876,11 +2302,10 @@ function DataQualitySection({ api, addLog }) {
         if (all.length >= d.total) break;
         page++;
       }
-
       setChecking("Fetching full recipe details…");
       const full = await Promise.all(all.map(r => api.get(`/recipes/${r.slug}`).catch(() => r)));
 
-      setChecking("Checking for duplicates…");
+      setChecking("Analyzing…");
       const nameMap = {};
       full.forEach(r => {
         const key = r.name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1888,8 +2313,6 @@ function DataQualitySection({ api, addLog }) {
         nameMap[key].push(r);
       });
       const duplicates = Object.values(nameMap).filter(g => g.length > 1);
-
-      setChecking("Checking source URLs…");
       const noImage = full.filter(r => !r.image);
       const noDesc = full.filter(r => !r.description || r.description.trim() === "");
       const noIngredients = full.filter(r => !r.recipeIngredient || r.recipeIngredient.length === 0);
@@ -1903,7 +2326,9 @@ function DataQualitySection({ api, addLog }) {
       const noSource = full.filter(r => !r.orgURL || r.orgURL.trim() === "");
       const noRating = full.filter(r => !r.rating || r.rating === 0);
 
-      setResults({ total: full.length, duplicates, noImage, noDesc, noIngredients, noInstructions, noTime, noTags, unparsed, noSource, noRating, recipes: full });
+      const auditResults = { total: full.length, duplicates, noImage, noDesc, noIngredients, noInstructions, noTime, noTags, unparsed, noSource, noRating, recipes: full };
+      setResults(auditResults);
+      onSaveResults(auditResults);
       addLog("ok", `Audit complete — ${full.length} recipes checked`);
     } catch (e) { addLog("error", e.message); }
     setLoading(false);
@@ -1911,6 +2336,10 @@ function DataQualitySection({ api, addLog }) {
   };
 
   const scoreColor = (pct) => pct >= 80 ? C.green : pct >= 50 ? C.yellow : C.red;
+
+  const scrollTo = (key) => {
+    sectionRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1920,32 +2349,67 @@ function DataQualitySection({ api, addLog }) {
           <div style={{ fontSize: 13, color: C.muted }}>Scans all recipes for missing fields, duplicates, unparsed ingredients, and more.</div>
         </div>
         <button className="btn-primary" style={{ padding: "12px 24px", fontSize: 14 }} onClick={runAudit} disabled={loading}>
-          {loading ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={14} /> {checking}</span> : "▶ Run Audit"}
+          {loading
+            ? <span style={{ display: "flex", alignItems: "center", gap: 8 }}><Spinner size={14} /> {checking}</span>
+            : results ? "↻ Re-run Audit" : "▶ Run Audit"}
         </button>
       </div>
 
       {results && (() => {
         const checks = [
-          { label: "Has Image",        bad: results.noImage,        icon: "🖼️" },
-          { label: "Has Description",  bad: results.noDesc,         icon: "📝" },
-          { label: "Has Ingredients",  bad: results.noIngredients,  icon: "🥕" },
-          { label: "Has Instructions", bad: results.noInstructions, icon: "📋" },
-          { label: "Has Time Info",    bad: results.noTime,         icon: "⏱️" },
-          { label: "Has Tags/Cats",    bad: results.noTags,         icon: "🏷️" },
-          { label: "Ingredients Parsed", bad: results.unparsed,    icon: "⚡" },
-          { label: "Has Source URL",   bad: results.noSource,       icon: "🔗" },
-          { label: "Has Rating",       bad: results.noRating,       icon: "⭐" },
+          { key: "noImage",        label: "Image",            bad: results.noImage,        icon: "🖼️",  repair: null },
+          { key: "noDesc",         label: "Description",      bad: results.noDesc,         icon: "📝",  repair: null },
+          { key: "noIngredients",  label: "Ingredients",      bad: results.noIngredients,  icon: "🥕",  repair: null },
+          { key: "noInstructions", label: "Instructions",     bad: results.noInstructions, icon: "📋",  repair: null },
+          { key: "noTime",         label: "Time Info",        bad: results.noTime,         icon: "⏱️",  repair: null },
+          { key: "noTags",         label: "Tags / Categories", bad: results.noTags,        icon: "🏷️",  repair: null },
+          { key: "unparsed",       label: "Parsed Ingredients", bad: results.unparsed,     icon: "⚡",
+            repair: async (r) => {
+              const ings = (r.recipeIngredient || []).map(i => i.display || i.note || "");
+              if (!ings.length) return;
+              const parsed = await api.post("/parser/ingredients", {
+                ingredients: ings.map(i => ({ ingredient: i })), parser: "nlp"
+              });
+              const updated = r.recipeIngredient.map((ing, idx) => ({
+                ...ing, ...(parsed[idx] ? {
+                  food: parsed[idx].ingredient?.food,
+                  unit: parsed[idx].ingredient?.unit,
+                  quantity: parsed[idx].ingredient?.quantity,
+                } : {})
+              }));
+              await api.patch(`/recipes/${r.slug}`, {
+                recipeIngredient: updated.map(ing => ({
+                  ...ing,
+                  food: ing.food ? { id: ing.food.id, name: ing.food.name } : null,
+                  unit: ing.unit ? { id: ing.unit.id, name: ing.unit.name } : null,
+                }))
+              });
+              addLog("ok", `Parsed: ${r.name}`);
+            }
+          },
+          { key: "noSource",       label: "Source URL",       bad: results.noSource,       icon: "🔗",  repair: null },
+          { key: "noRating",       label: "Rating",           bad: results.noRating,       icon: "⭐",  repair: null },
         ];
 
         return (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* Score overview */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+            {/* Score overview — clickable to scroll */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 12 }}>
               {checks.map(c => {
                 const good = results.total - c.bad.length;
                 const pct = results.total ? Math.round((good / results.total) * 100) : 100;
+                const hasBad = c.bad.length > 0;
                 return (
-                  <div key={c.label} className="card" style={{ padding: 14 }}>
+                  <div key={c.key} className="card" style={{
+                    padding: 14, cursor: hasBad ? "pointer" : "default",
+                    border: `1px solid ${hasBad ? scoreColor(pct) + "44" : C.border}`,
+                    transition: "all .2s",
+                  }}
+                    onClick={() => hasBad && scrollTo(c.key)}
+                    onMouseEnter={e => hasBad && (e.currentTarget.style.transform = "translateY(-2px)")}
+                    onMouseLeave={e => hasBad && (e.currentTarget.style.transform = "none")}
+                    title={hasBad ? `Click to jump to ${c.label} issues` : ""}
+                  >
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                       <span style={{ fontSize: 12, color: C.muted }}>{c.icon} {c.label}</span>
                       <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: scoreColor(pct) }}>{pct}%</span>
@@ -1954,7 +2418,7 @@ function DataQualitySection({ api, addLog }) {
                       <div className="progress-fill" style={{ width: `${pct}%`, background: scoreColor(pct) }} />
                     </div>
                     <div style={{ fontSize: 11, color: C.muted, marginTop: 6 }}>
-                      {c.bad.length > 0 ? `${c.bad.length} need attention` : "All good ✓"}
+                      {hasBad ? `${c.bad.length} need attention ${hasBad ? "↓" : ""}` : "All good ✓"}
                     </div>
                   </div>
                 );
@@ -1963,7 +2427,7 @@ function DataQualitySection({ api, addLog }) {
 
             {/* Duplicates */}
             {results.duplicates.length > 0 && (
-              <div className="card">
+              <div className="card" ref={el => sectionRefs.current["duplicates"] = el}>
                 <div style={{ fontWeight: 600, marginBottom: 12, color: C.yellow }}>
                   ⚠ Possible Duplicate Recipes ({results.duplicates.length} groups)
                 </div>
@@ -1972,7 +2436,6 @@ function DataQualitySection({ api, addLog }) {
                     {group.map(r => (
                       <div key={r.id} style={{ fontSize: 13, padding: "2px 0" }}>
                         <span style={{ fontWeight: 500 }}>{r.name}</span>
-                        <span className="mono" style={{ color: C.muted, fontSize: 11, marginLeft: 8 }}>{r.slug}</span>
                       </div>
                     ))}
                   </div>
@@ -1980,31 +2443,68 @@ function DataQualitySection({ api, addLog }) {
               </div>
             )}
 
-            {/* Detail tables for each issue */}
-            {checks.filter(c => c.bad.length > 0).map(c => (
-              <div key={c.label} className="card" style={{ padding: 0, overflow: "hidden" }}>
-                <div style={{ padding: "12px 16px", fontWeight: 600, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between" }}>
-                  <span>{c.icon} Missing: {c.label}</span>
-                  <span className="tag tag-red">{c.bad.length} recipes</span>
+            {/* Detail tables */}
+            {checks.filter(c => c.bad.length > 0).map(c => {
+              const showAll = expanded[c.key];
+              const displayed = showAll ? c.bad : c.bad.slice(0, 10);
+              return (
+                <div key={c.key} className="card" style={{ padding: 0, overflow: "hidden" }}
+                  ref={el => sectionRefs.current[c.key] = el}>
+                  <div style={{ padding: "12px 16px", fontWeight: 600, borderBottom: `1px solid ${C.border}`,
+                    display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>{c.icon} Missing {c.label}</span>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      {c.repair && (
+                        <button className="btn-success" style={{ fontSize: 11, padding: "4px 12px" }}
+                          onClick={async () => {
+                            addLog("info", `Repairing ${c.bad.length} recipes for: ${c.label}…`);
+                            for (const r of c.bad) {
+                              try { await c.repair(r); }
+                              catch (e) { addLog("error", `${r.name}: ${e.message}`); }
+                            }
+                            addLog("ok", `Done repairing ${c.label}`);
+                            runAudit();
+                          }}>
+                          ⚡ Auto-Repair All
+                        </button>
+                      )}
+                      <span className="tag tag-red">{c.bad.length} recipes</span>
+                    </div>
+                  </div>
+                  <table>
+                    <thead><tr><th>Recipe</th>{c.repair && <th style={{ width: 120 }}>Action</th>}</tr></thead>
+                    <tbody>
+                      {displayed.map(r => (
+                        <tr key={r.id}>
+                          <td style={{ fontWeight: 500 }}>{r.name}</td>
+                          {c.repair && (
+                            <td>
+                              <button className="btn-success" style={{ fontSize: 11, padding: "3px 10px" }}
+                                onClick={async () => {
+                                  try { await c.repair(r); addLog("ok", `Fixed: ${r.name}`); runAudit(); }
+                                  catch(e) { addLog("error", `${r.name}: ${e.message}`); }
+                                }}>⚡ Fix</button>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                      {c.bad.length > 10 && (
+                        <tr>
+                          <td colSpan={c.repair ? 2 : 1} style={{ textAlign: "center", padding: 10 }}>
+                            <button className="btn-ghost" style={{ fontSize: 12, padding: "4px 16px" }}
+                              onClick={() => setExpanded(e => ({ ...e, [c.key]: !e[c.key] }))}>
+                              {showAll
+                                ? "Show less ↑"
+                                : `Show ${c.bad.length - 10} more ↓`}
+                            </button>
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-                <table>
-                  <thead><tr><th>Recipe</th><th>Slug</th></tr></thead>
-                  <tbody>
-                    {c.bad.slice(0, 10).map(r => (
-                      <tr key={r.id}>
-                        <td style={{ fontWeight: 500 }}>{r.name}</td>
-                        <td><span className="mono" style={{ fontSize: 11, color: C.muted }}>{r.slug}</span></td>
-                      </tr>
-                    ))}
-                    {c.bad.length > 10 && (
-                      <tr><td colSpan={2} style={{ color: C.muted, fontSize: 12, textAlign: "center", padding: 10 }}>
-                        …and {c.bad.length - 10} more
-                      </td></tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            ))}
+              );
+            })}
           </div>
         );
       })()}
@@ -2019,13 +2519,13 @@ function DataQualitySection({ api, addLog }) {
   );
 }
 
+
 // ─── SECTION: Admin ────────────────────────────────────────────────────────────
 function AdminSection({ api, addLog }) {
   const [activeTab, setActiveTab] = useState("users");
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [backupRunning, setBackupRunning] = useState(false);
-  const [serverInfo, setServerInfo] = useState(null);
   const [newUser, setNewUser] = useState({ username: "", email: "", password: "", fullName: "", admin: false });
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -2034,12 +2534,8 @@ function AdminSection({ api, addLog }) {
     (async () => {
       setLoading(true);
       try {
-        const [u, info] = await Promise.all([
-          api.get("/admin/users?perPage=100"),
-          api.get("/app/about"),
-        ]);
+        const u = await api.get("/admin/users?perPage=100");
         setUsers(u.items || []);
-        setServerInfo(info);
       } catch (e) { addLog("error", e.message); }
       setLoading(false);
     })();
@@ -2093,7 +2589,7 @@ function AdminSection({ api, addLog }) {
     setBackupRunning(false);
   };
 
-  const adminTabs = ["users", "server", "backups"];
+  const adminTabs = ["users", "backups"];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -2163,29 +2659,6 @@ function AdminSection({ api, addLog }) {
               </table>
             )}
           </div>
-        </div>
-      )}
-
-      {/* Server tab */}
-      {activeTab === "server" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          {serverInfo && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
-              {[
-                ["Version", serverInfo.version],
-                ["Production", serverInfo.production ? "Yes" : "No"],
-                ["Demo", serverInfo.demoStatus ? "Yes" : "No"],
-                ["Allow Signup", serverInfo.allowSignup ? "Yes" : "No"],
-                ["Default Group", serverInfo.defaultGroup],
-                ["Build ID", serverInfo.buildId],
-              ].map(([k, v]) => (
-                <div key={k} style={{ background: C.surfaceAlt, borderRadius: 8, padding: "12px 14px" }}>
-                  <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>{k}</div>
-                  <div className="mono" style={{ fontSize: 13 }}>{v ?? "—"}</div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
@@ -2260,6 +2733,8 @@ function ImageSection({ api, addLog }) {
   const [filter, setFilter] = useState("missing");
   const [fetchUrl, setFetchUrl] = useState({});
   const [fetching, setFetching] = useState({});
+  const [uploadMode, setUploadMode] = useState({}); // slug -> "url" | "upload"
+  const fileInputRefs = useRef({});
 
   useEffect(() => {
     (async () => {
@@ -2278,7 +2753,10 @@ function ImageSection({ api, addLog }) {
     })();
   }, [api]);
 
-  const fetchImage = async (slug) => {
+  const getMode = (slug) => uploadMode[slug] || "url";
+  const setMode = (slug, mode) => setUploadMode(m => ({ ...m, [slug]: mode }));
+
+  const setByUrl = async (slug) => {
     const url = fetchUrl[slug];
     if (!url) return;
     setFetching(f => ({ ...f, [slug]: true }));
@@ -2286,7 +2764,33 @@ function ImageSection({ api, addLog }) {
       await api.post(`/recipes/${slug}/image`, { url, fileName: "original" });
       addLog("ok", `Image set for: ${slug}`);
       setRecipes(r => r.map(x => x.slug === slug ? { ...x, image: url } : x));
-    } catch (e) { addLog("error", `Image fetch failed for ${slug}: ${e.message}`); }
+      setFetchUrl(f => ({ ...f, [slug]: "" }));
+    } catch (e) { addLog("error", `URL image failed for ${slug}: ${e.message}`); }
+    setFetching(f => ({ ...f, [slug]: false }));
+  };
+
+  const uploadFile = async (slug, file) => {
+    if (!file) return;
+    setFetching(f => ({ ...f, [slug]: true }));
+    try {
+      // Read file as base64 data URL then post as multipart
+      const formData = new FormData();
+      formData.append("image", file);
+      formData.append("extension", file.name.split(".").pop());
+      // Use fetch directly with FormData (our api helper sets Content-Type: application/json)
+      const mealieUrl = document.cookie; // not used — we grab from header
+      const r = await fetch(`/api/recipes/${slug}/image`, {
+        method: "POST",
+        headers: {
+          "X-Mealie-Url": api._base,
+          "Authorization": `Bearer ${api._token}`,
+        },
+        body: formData,
+      });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      addLog("ok", `Image uploaded for: ${slug}`);
+      setRecipes(rs => rs.map(x => x.slug === slug ? { ...x, image: file.name } : x));
+    } catch (e) { addLog("error", `Upload failed for ${slug}: ${e.message}`); }
     setFetching(f => ({ ...f, [slug]: false }));
   };
 
@@ -2318,30 +2822,67 @@ function ImageSection({ api, addLog }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {displayed.map(r => (
             <div key={r.id} className="card" style={{ display: "flex", gap: 14, alignItems: "center", padding: 14 }}>
+              {/* Thumbnail */}
               <div style={{
-                width: 60, height: 60, borderRadius: 10, flexShrink: 0, overflow: "hidden",
+                width: 64, height: 64, borderRadius: 10, flexShrink: 0, overflow: "hidden",
                 background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center",
               }}>
                 {r.image
-                  ? <img src={`${api._base}/api/media/recipes/${r.id}/images/min-original.webp`}
+                  ? <img src={`${api._base}/media/recipes/${r.id}/images/min-original.webp`}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       onError={e => e.target.style.display = "none"} />
-                  : <span style={{ fontSize: 24 }}>🍽️</span>
+                  : <span style={{ fontSize: 28 }}>🍽️</span>
                 }
               </div>
+
+              {/* Name + input */}
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 500, marginBottom: 6 }}>{r.name}</div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input placeholder="Image URL…" value={fetchUrl[r.slug] || ""}
-                    onChange={e => setFetchUrl(f => ({ ...f, [r.slug]: e.target.value }))}
-                    style={{ flex: 1, fontSize: 12, padding: "5px 10px" }} />
-                  <button className="btn-success" style={{ fontSize: 12, padding: "5px 12px" }}
-                    onClick={() => fetchImage(r.slug)} disabled={!fetchUrl[r.slug] || fetching[r.slug]}>
-                    {fetching[r.slug] ? <Spinner size={12} /> : "Set Image"}
-                  </button>
+                <div style={{ fontWeight: 500, marginBottom: 8 }}>{r.name}</div>
+
+                {/* Mode toggle */}
+                <div style={{ display: "flex", gap: 0, marginBottom: 8, borderRadius: 7, overflow: "hidden", border: `1px solid ${C.border}`, width: "fit-content" }}>
+                  {["url", "upload"].map(m => (
+                    <button key={m} onClick={() => setMode(r.slug, m)} style={{
+                      padding: "4px 14px", fontSize: 11, fontWeight: 600, border: "none",
+                      background: getMode(r.slug) === m ? C.accent : C.surfaceAlt,
+                      color: getMode(r.slug) === m ? "#fff" : C.muted,
+                      cursor: "pointer", textTransform: "capitalize",
+                    }}>{m === "url" ? "🔗 URL" : "📁 Upload"}</button>
+                  ))}
                 </div>
+
+                {getMode(r.slug) === "url" ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input placeholder="https://example.com/image.jpg"
+                      value={fetchUrl[r.slug] || ""}
+                      onChange={e => setFetchUrl(f => ({ ...f, [r.slug]: e.target.value }))}
+                      onKeyDown={e => e.key === "Enter" && setByUrl(r.slug)}
+                      style={{ flex: 1, fontSize: 12, padding: "5px 10px" }} />
+                    <button className="btn-success" style={{ fontSize: 12, padding: "5px 14px", flexShrink: 0 }}
+                      onClick={() => setByUrl(r.slug)} disabled={!fetchUrl[r.slug] || fetching[r.slug]}>
+                      {fetching[r.slug] ? <Spinner size={12} /> : "Set"}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      ref={el => fileInputRefs.current[r.slug] = el}
+                      style={{ display: "none" }}
+                      onChange={e => uploadFile(r.slug, e.target.files[0])}
+                    />
+                    <button className="btn-ghost" style={{ fontSize: 12, padding: "5px 14px" }}
+                      onClick={() => fileInputRefs.current[r.slug]?.click()}
+                      disabled={fetching[r.slug]}>
+                      {fetching[r.slug] ? <Spinner size={12} /> : "Choose File…"}
+                    </button>
+                    <span style={{ fontSize: 11, color: C.muted }}>JPG, PNG, WebP</span>
+                  </div>
+                )}
               </div>
-              <span className={`tag ${r.image ? "tag-green" : "tag-red"}`}>
+
+              <span className={`tag ${r.image ? "tag-green" : "tag-red"}`} style={{ flexShrink: 0 }}>
                 {r.image ? "✓" : "✗"}
               </span>
             </div>
