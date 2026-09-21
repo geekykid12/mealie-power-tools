@@ -4,10 +4,10 @@
 #  1. Find your existing Mealie network name:
 #       docker inspect mealie --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'
 #
-#  2. Replace "mealie_default" below with your actual network name.
+#  2. Replace "mealie_default" below with your actual network name (appears twice).
 #
 #  3. Run:
-#       docker compose -f docker-compose.attach.yml up -d
+#       docker compose -f docker-compose.attach.yml up -d --build
 # ─────────────────────────────────────────────────────────────────────────────
 
 networks:
@@ -19,6 +19,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: mealie-powertools:latest   # explicit image name — prevents <dir>-<service> naming
     container_name: mealie-powertools
     restart: unless-stopped
     ports:

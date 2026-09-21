@@ -57,6 +57,7 @@ services:
     depends_on:
       mealie:
         condition: service_healthy
+    image: mealie-powertools:latest   # explicit image name — prevents <dir>-<service> naming
     labels:
       - "com.mealie.powertools=true"
 

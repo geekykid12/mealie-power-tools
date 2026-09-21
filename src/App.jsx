@@ -323,6 +323,42 @@ function LogPanel({ logs }) {
   );
 }
 
+// ─── Cache Header ────────────────────────────────────────────────────────────
+function CacheHeader({ loadedAt, onReload, loading, label }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick(n => n + 1), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const ago = (ts) => {
+    if (!ts) return null;
+    const diff = Math.floor((Date.now() - ts) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    return `${Math.floor(diff / 3600)}h ago`;
+  };
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      background: C.surfaceAlt, border: `1px solid ${C.border}`,
+      borderRadius: 10, padding: "8px 14px", fontSize: 12,
+    }}>
+      <span style={{ color: C.muted }}>
+        {loadedAt
+          ? <span>📦 {label || "Data"} loaded <span style={{ color: C.text }}>{ago(loadedAt)}</span></span>
+          : <span style={{ color: C.muted }}>No data loaded yet</span>
+        }
+      </span>
+      <button className="btn-ghost" style={{ padding: "4px 14px", fontSize: 12 }}
+        onClick={onReload} disabled={loading}>
+        {loading ? <Spinner size={12} /> : "↻ Reload"}
+      </button>
+    </div>
+  );
+}
+
 // ─── SECTION: Recipes ─────────────────────────────────────────────────────────
 function RecipesSection({ api, addLog, cache, onCache }) {
   const [recipes, setRecipes] = useState(cache?.recipes || null);
@@ -348,7 +384,7 @@ function RecipesSection({ api, addLog, cache, onCache }) {
       setRecipes(full);
       setTotal(data.total || 0);
       setPage(p);
-      onCache({ recipes: full, total: data.total || 0, page: p, search: q });
+      onCache({ recipes: full, total: data.total || 0, page: p, search: q, loadedAt: Date.now() });
     } catch (e) { addLog("error", `Load recipes: ${e.message}`); }
     setLoading(false);
   }, [api]);
@@ -405,6 +441,7 @@ function RecipesSection({ api, addLog, cache, onCache }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <CacheHeader loadedAt={cache?.loadedAt} loading={loading} label="Recipes" onReload={() => load(page, search)} />
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <div style={{ position: "relative", flex: 1 }}>
           <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}>
@@ -468,10 +505,13 @@ function RecipesSection({ api, addLog, cache, onCache }) {
                           setParsingSlug(r.slug);
                           try {
                             const full = await api.get(`/recipes/${r.slug}`);
-                            const ings = (full.recipeIngredient || []).map(i => i.display || i.note || "");
+                            const ings = (full.recipeIngredient || [])
+                              .filter(i => i.display || i.note)
+                              .map(i => i.display || i.note || "");
                             if (ings.length) {
                               const parsed = await api.post("/parser/ingredients", {
-                                ingredients: ings.map(i => ({ ingredient: i })), parser: "nlp"
+                                ingredients: ings,
+                                parser: "nlp"
                               });
                               const updated = full.recipeIngredient.map((ing, idx) => ({
                                 ...ing, ...(parsed[idx] ? {
@@ -663,7 +703,8 @@ function RecipesSection({ api, addLog, cache, onCache }) {
                     {(() => {
                       let stepNum = 0;
                       return (editFull.recipeInstructions || []).map((step, idx) => {
-                        const isHeader = step.isHeader || (!step.text && step.title && !(editFull.recipeInstructions[idx - 1]?.text));
+                        // Mealie stores section headers as steps with a title and empty/null text
+                        const isHeader = step.isHeader || (step.title && (!step.text || step.text.trim() === ""));
                         if (!isHeader) stepNum++;
                         return (
                           <div key={step.id || idx} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -786,10 +827,14 @@ function ParserSection({ api, addLog }) {
   };
 
   const callParser = async (recipe) => {
-    const ingredients = (recipe.recipeIngredient || []).map(i => i.display || i.note || "");
+    // Filter out section headers (title-only entries with no display/note)
+    const ingredients = (recipe.recipeIngredient || [])
+      .filter(i => i.display || i.note)
+      .map(i => i.display || i.note || "");
     if (!ingredients.length) return null;
+    // API expects an array of strings, not objects
     const parsed = await api.post("/parser/ingredients", {
-      ingredients: ingredients.map(i => ({ ingredient: i })),
+      ingredients,
       parser,
     });
     return parsed;
@@ -1157,12 +1202,12 @@ function ParserSection({ api, addLog }) {
 }
 
 // ─── SECTION: Households ──────────────────────────────────────────────────────
-function HouseholdsSection({ api, addLog }) {
-  const [groups, setGroups] = useState([]);
-  const [households, setHouseholds] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [selectedHousehold, setSelectedHousehold] = useState(null);
-  const [loading, setLoading] = useState(true);
+function HouseholdsSection({ api, addLog, cache, onCache }) {
+  const [groups, setGroups] = useState(cache?.groups || []);
+  const [households, setHouseholds] = useState(cache?.households || []);
+  const [users, setUsers] = useState(cache?.users || []);
+  const [selectedHousehold, setSelectedHousehold] = useState(cache?.selectedHousehold || null);
+  const [loading, setLoading] = useState(!cache);
   const [creating, setCreating] = useState(false);
   const [editUser, setEditUser] = useState(null);
   const [newUser, setNewUser] = useState({ username: "", email: "", password: "", fullName: "", admin: false });
@@ -1239,7 +1284,14 @@ function HouseholdsSection({ api, addLog }) {
     setSaving(false);
   };
 
-  if (loading) return <div style={{ textAlign: "center", padding: 60 }}><Spinner size={32} /></div>;
+  const resetPassword = async (user, newPassword) => {
+    try {
+      await api.put(`/admin/users/${user.id}`, { ...user, password: newPassword });
+      addLog("ok", `Password reset for: ${user.username}`);
+    } catch (e) { addLog("error", e.message); }
+  };
+
+  if (loading && !cache) return <div style={{ textAlign: "center", padding: 60 }}><Spinner size={32} /></div>;
 
   const householdUsers = selectedHousehold
     ? users.filter(u => u.householdId === selectedHousehold.id)
@@ -1249,6 +1301,7 @@ function HouseholdsSection({ api, addLog }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <CacheHeader loadedAt={cache?.loadedAt} loading={loading} label="Households" onReload={() => { onCache(null); loadAll(); }} />
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
         <StatCard label="Groups" value={groups.length} accent={C.accent} sub="Top-level groups" />
         <StatCard label="Households" value={households.length} accent={C.blue} sub="Across all groups" />
@@ -1343,14 +1396,16 @@ function HouseholdsSection({ api, addLog }) {
                         <td>
                           <button onClick={() => toggleAdmin(m)}
                             className={`tag ${m.admin ? "tag-orange" : "tag-muted"}`}
-                            style={{ cursor: "pointer", border: "none" }}>
+                            style={{ cursor: "pointer", border: "none" }}
+                            title={m.admin ? "Click to remove admin role" : "Click to grant admin role"}>
                             {m.admin ? "admin" : "user"}
                           </button>
                         </td>
                         <td>
                           <button onClick={() => toggleEnabled(m)}
                             className={`tag ${m.enabled !== false ? "tag-green" : "tag-red"}`}
-                            style={{ cursor: "pointer", border: "none" }}>
+                            style={{ cursor: "pointer", border: "none" }}
+                            title={m.enabled !== false ? "Click to disable this account" : "Click to enable this account"}>
                             {m.enabled !== false ? "active" : "disabled"}
                           </button>
                         </td>
@@ -1446,6 +1501,23 @@ function HouseholdsSection({ api, addLog }) {
                   onChange={e => setEditUser(u => ({ ...u, admin: e.target.checked }))} />
                 Admin
               </label>
+              {/* Password reset */}
+              <div style={{ paddingTop: 12, borderTop: `1px solid ${C.border}` }}>
+                <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 5 }}>Reset Password</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input type="password" placeholder="New password…"
+                    value={editUser._newPassword || ""}
+                    onChange={e => setEditUser(u => ({ ...u, _newPassword: e.target.value }))} />
+                  <button className="btn-danger" style={{ flexShrink: 0, padding: "6px 14px", fontSize: 12 }}
+                    disabled={!editUser._newPassword || saving}
+                    onClick={async () => {
+                      await resetPassword(editUser, editUser._newPassword);
+                      setEditUser(u => ({ ...u, _newPassword: "" }));
+                    }}>
+                    Reset
+                  </button>
+                </div>
+              </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
                 <button className="btn-ghost" onClick={() => setEditUser(null)}>Cancel</button>
                 <button className="btn-primary" onClick={saveEditUser} disabled={saving}>
@@ -1472,14 +1544,38 @@ function CookbooksSection({ api, addLog }) {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [saving, setSaving] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState(false);
+
+  // AI state
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResults, setAiResults] = useState(null);
+  const [aiError, setAiError] = useState("");
+  const [aiModel, setAiModel] = useState("");
+
+  // Review state — after AI generates, user picks recipes per suggestion
+  const [reviewing, setReviewing] = useState(null); // single suggestion being reviewed
+  const [reviewRecipes, setReviewRecipes] = useState([]); // [{recipe, included}]
+  const [reviewSearch, setReviewSearch] = useState("");
+  const [finalizing, setFinalizing] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const cb = await api.get("/households/cookbooks?perPage=100");
       setCookbooks(cb.items || []);
-      const r = await api.get("/recipes?page=1&perPage=100");
-      setAllRecipes(r.items || []);
+      let all = [], page = 1;
+      while (true) {
+        const d = await api.get(`/recipes?page=${page}&perPage=100`);
+        all = [...all, ...(d.items || [])];
+        if (all.length >= d.total) break;
+        page++;
+      }
+      setAllRecipes(all);
+      // Check if AI is enabled
+      const about = await api.get("/app/about").catch(() => ({}));
+      setAiEnabled(!!(about.openaiEnabled || about.aiEnabled));
     } catch (e) { addLog("error", e.message); }
     setLoading(false);
   }, [api]);
@@ -1499,7 +1595,7 @@ function CookbooksSection({ api, addLog }) {
     if (!confirm(`Delete cookbook "${name}"?`)) return;
     try {
       await api.delete(`/households/cookbooks/${id}`);
-      addLog("ok", `Deleted cookbook: ${name}`);
+      addLog("ok", `Deleted: ${name}`);
       if (selected?.id === id) setSelected(null);
       load();
     } catch (e) { addLog("error", e.message); }
@@ -1509,125 +1605,391 @@ function CookbooksSection({ api, addLog }) {
     setSaving(true);
     try {
       await api.post("/households/cookbooks", { name: newName, description: newDesc, public: false });
-      addLog("ok", `Created cookbook: ${newName}`);
+      addLog("ok", `Created: ${newName}`);
       setNewName(""); setNewDesc(""); setCreating(false);
       load();
     } catch (e) { addLog("error", e.message); }
     setSaving(false);
   };
 
+  // ── AI generation ─────────────────────────────────────────────────────────────
+  const generateAi = async () => {
+    setAiLoading(true); setAiError(""); setAiResults(null);
+    try {
+      const res = await fetch("/ai-cookbook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mealieUrl: api._base,
+          token: api._token,
+          recipes: allRecipes,
+          cookbooks: cookbooks || [],
+          prompt: aiPrompt,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Unknown error");
+      setAiResults(data.suggestions);
+      setAiModel(data.model || "");
+      addLog("ok", `AI suggested ${data.suggestions.length} cookbooks via ${data.model}`);
+    } catch (e) {
+      setAiError(e.message);
+      addLog("error", `AI error: ${e.message}`);
+    }
+    setAiLoading(false);
+  };
+
+  // ── Open review for a suggestion ──────────────────────────────────────────────
+  const openReview = (suggestion) => {
+    const existingCb = (cookbooks || []).find(
+      cb => cb.name.toLowerCase() === suggestion.name.toLowerCase()
+    );
+    // Match suggested recipe names to actual recipe objects
+    const suggested = new Set(
+      (suggestion.recipeNames || []).map(n => n.toLowerCase())
+    );
+    // Build list: suggested recipes first (included), then rest (excluded)
+    const included = allRecipes.filter(r => suggested.has(r.name.toLowerCase()))
+      .map(r => ({ recipe: r, included: true }));
+    const excluded = allRecipes.filter(r => !suggested.has(r.name.toLowerCase()))
+      .map(r => ({ recipe: r, included: false }));
+    setReviewing({ ...suggestion, existingCb });
+    setReviewRecipes([...included, ...excluded]);
+    setReviewSearch("");
+  };
+
+  // ── Finalize: create or update cookbook ───────────────────────────────────────
+  const finalize = async () => {
+    if (!reviewing) return;
+    setFinalizing(true);
+    const includedRecipes = reviewRecipes.filter(r => r.included).map(r => r.recipe);
+    try {
+      if (reviewing.existingCb) {
+        // Cookbook already exists — just log, Mealie cookbooks use filter rules not explicit lists
+        addLog("ok", `Cookbook "${reviewing.existingCb.name}" already exists. Note: Mealie cookbooks use category/tag filters, not explicit recipe lists. Open it in Mealie to adjust filters.`);
+      } else {
+        await api.post("/households/cookbooks", {
+          name: reviewing.name,
+          description: reviewing.description,
+          public: false,
+        });
+        addLog("ok", `Created cookbook: ${reviewing.name} (${includedRecipes.length} recipes suggested)`);
+      }
+      setReviewing(null);
+      setAiOpen(false);
+      setAiResults(null);
+      load();
+    } catch (e) { addLog("error", e.message); }
+    setFinalizing(false);
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 60 }}><Spinner size={32} /></div>;
 
-  // Colors for cookbook cards
   const cbColors = [C.accent, C.blue, C.green, C.yellow, "#a855f7", "#ec4899"];
 
-  return (
-    <div style={{ display: "flex", gap: 20 }}>
-      {/* Left: cookbook list */}
-      <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontWeight: 600 }}>Cookbooks ({cookbooks?.length ?? 0})</div>
-          <button className="btn-primary" style={{ padding: "6px 12px", fontSize: 12 }} onClick={() => setCreating(true)}>
-            + New
+  // ── Review Modal ──────────────────────────────────────────────────────────────
+  if (reviewing) {
+    const isExisting = !!reviewing.existingCb;
+    const includedCount = reviewRecipes.filter(r => r.included).length;
+    const filteredReview = reviewRecipes.filter(r =>
+      r.recipe.name.toLowerCase().includes(reviewSearch.toLowerCase())
+    );
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{reviewing.name}</div>
+            <div style={{ color: C.muted, fontSize: 13, marginTop: 4 }}>{reviewing.description}</div>
+            {isExisting && (
+              <div style={{ marginTop: 10, padding: "8px 12px", background: `${C.yellow}18`, border: `1px solid ${C.yellow}44`, borderRadius: 8, fontSize: 12, color: C.yellow }}>
+                ⚠ A cookbook named "<strong>{reviewing.existingCb.name}</strong>" already exists. Confirming will note the suggested recipes but won't duplicate the cookbook.
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
+            <button className="btn-ghost" onClick={() => setReviewing(null)}>← Back</button>
+            <button className="btn-primary" style={{ padding: "8px 20px" }}
+              onClick={finalize} disabled={finalizing}>
+              {finalizing ? <Spinner size={13} /> : isExisting ? "Acknowledge" : `✓ Create with ${includedCount} recipes`}
+            </button>
+          </div>
+        </div>
+
+        <div className="card" style={{ padding: "10px 14px" }}>
+          <div style={{ fontSize: 12, color: C.muted, marginBottom: 4 }}>
+            <strong style={{ color: C.text }}>{includedCount}</strong> recipes included · <strong style={{ color: C.text }}>{reviewRecipes.length - includedCount}</strong> excluded
+          </div>
+          <div style={{ fontSize: 11, color: C.muted }}>
+            💡 Note: Mealie cookbooks use category/tag filter rules, not explicit recipe lists. Creating the cookbook here sets it up — you'll assign its filter rules in Mealie.
+          </div>
+        </div>
+
+        <div style={{ position: "relative" }}>
+          <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}>
+            <Icon name="search" size={14} color={C.muted} />
+          </div>
+          <input style={{ paddingLeft: 32 }} placeholder="Search recipes…"
+            value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: -8 }}>
+          <button className="btn-ghost" style={{ fontSize: 11, padding: "4px 12px" }}
+            onClick={() => setReviewRecipes(rs => rs.map(r => ({ ...r, included: true })))}>
+            ✓ Include all
+          </button>
+          <button className="btn-ghost" style={{ fontSize: 11, padding: "4px 12px" }}
+            onClick={() => setReviewRecipes(rs => rs.map(r => ({ ...r, included: false })))}>
+            ✗ Exclude all
           </button>
         </div>
 
-        {cookbooks?.map((cb, i) => {
-          const color = cbColors[i % cbColors.length];
-          const isSelected = selected?.id === cb.id;
-          return (
-            <div key={cb.id} onClick={() => selectCookbook(cb)} style={{
-              background: isSelected ? `${color}18` : C.card,
-              border: `1px solid ${isSelected ? color : C.border}`,
-              borderRadius: 12, padding: "14px 16px", cursor: "pointer",
-              transition: "all .2s",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div>
-                  <div style={{
-                    width: 8, height: 8, borderRadius: "50%",
-                    background: color, marginBottom: 8,
-                  }} />
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{cb.name}</div>
-                  {cb.description && (
-                    <div style={{ fontSize: 11, color: C.muted, marginTop: 4, lineHeight: 1.4 }}>
-                      {cb.description.slice(0, 60)}{cb.description.length > 60 ? "…" : ""}
-                    </div>
-                  )}
-                </div>
-                <button className="btn-danger" style={{ padding: "4px 8px", marginLeft: 8 }}
-                  onClick={e => { e.stopPropagation(); deleteCookbook(cb.id, cb.name); }}>
-                  <Icon name="trash" size={12} />
-                </button>
-              </div>
-            </div>
-          );
-        })}
-
-        {cookbooks?.length === 0 && (
-          <div style={{ color: C.muted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>
-            No cookbooks yet.<br />Create one to get started.
-          </div>
-        )}
+        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+          <table>
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>✓</th>
+                <th>Recipe</th>
+                <th>Categories</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredReview.map(({ recipe, included }, idx) => (
+                <tr key={recipe.id}
+                  style={{ background: included ? `${C.green}08` : undefined, cursor: "pointer" }}
+                  onClick={() => setReviewRecipes(rs => rs.map(r =>
+                    r.recipe.id === recipe.id ? { ...r, included: !r.included } : r
+                  ))}>
+                  <td onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={included}
+                      onChange={() => setReviewRecipes(rs => rs.map(r =>
+                        r.recipe.id === recipe.id ? { ...r, included: !r.included } : r
+                      ))} />
+                  </td>
+                  <td style={{ fontWeight: included ? 600 : 400 }}>{recipe.name}</td>
+                  <td>
+                    {(recipe.recipeCategory || []).slice(0, 2).map(c => (
+                      <span key={c.id} className="tag tag-orange" style={{ marginRight: 3 }}>{c.name}</span>
+                    ))}
+                  </td>
+                  <td>
+                    <span className={`tag ${included ? "tag-green" : "tag-muted"}`}>
+                      {included ? "included" : "excluded"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
+    );
+  }
 
-      {/* Right: detail */}
-      <div style={{ flex: 1 }}>
-        {selected ? (
-          <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="card">
-              <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{selected.name}</div>
-              {selected.description && (
-                <div style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>{selected.description}</div>
+  // ── Main view ─────────────────────────────────────────────────────────────────
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", gap: 20 }}>
+        {/* Sidebar */}
+        <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontWeight: 600 }}>Cookbooks ({cookbooks?.length ?? 0})</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {aiEnabled && (
+                <button className="btn-ghost" style={{ padding: "5px 10px", fontSize: 12, color: "#a855f7", borderColor: "#a855f744" }}
+                  title="Generate cookbook recommendations using Mealie's configured AI"
+                  onClick={() => { setAiOpen(true); setAiResults(null); setAiError(""); }}>
+                  ✨ AI
+                </button>
               )}
-              <div style={{ display: "flex", gap: 8 }}>
-                <span className="tag tag-muted">ID: {selected.id.slice(0, 8)}…</span>
+              <button className="btn-primary" style={{ padding: "5px 10px", fontSize: 12 }}
+                onClick={() => setCreating(true)}>+ New</button>
+            </div>
+          </div>
+
+          {cookbooks?.map((cb, i) => {
+            const color = cbColors[i % cbColors.length];
+            const isSelected = selected?.id === cb.id;
+            return (
+              <div key={cb.id} onClick={() => selectCookbook(cb)} style={{
+                background: isSelected ? `${color}18` : C.card,
+                border: `1px solid ${isSelected ? color : C.border}`,
+                borderRadius: 12, padding: "14px 16px", cursor: "pointer", transition: "all .2s",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: color, marginBottom: 8 }} />
+                    <div style={{ fontWeight: 600, fontSize: 14 }}>{cb.name}</div>
+                    {cb.description && (
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 4, lineHeight: 1.4 }}>
+                        {cb.description.slice(0, 60)}{cb.description.length > 60 ? "…" : ""}
+                      </div>
+                    )}
+                  </div>
+                  <button className="btn-danger" style={{ padding: "4px 8px", marginLeft: 8 }}
+                    onClick={e => { e.stopPropagation(); deleteCookbook(cb.id, cb.name); }}>
+                    <Icon name="trash" size={12} />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+
+          {cookbooks?.length === 0 && (
+            <div style={{ color: C.muted, fontSize: 13, textAlign: "center", padding: "40px 0" }}>
+              No cookbooks yet.
+            </div>
+          )}
+        </div>
+
+        {/* Detail */}
+        <div style={{ flex: 1 }}>
+          {selected ? (
+            <div className="fade-up" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div className="card">
+                <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>{selected.name}</div>
+                {selected.description && (
+                  <div style={{ color: C.muted, fontSize: 13, marginBottom: 12 }}>{selected.description}</div>
+                )}
                 <span className={`tag ${selected.public ? "tag-green" : "tag-muted"}`}>
                   {selected.public ? "Public" : "Private"}
                 </span>
               </div>
+              <div style={{ fontWeight: 600 }}>Recipes ({cbRecipes.length})</div>
+              {cbRecipes.length === 0 ? (
+                <div className="card" style={{ textAlign: "center", color: C.muted, padding: 40 }}>
+                  No recipes matched this cookbook's filters.
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+                  {cbRecipes.map(r => (
+                    <div key={r.id} className="card" style={{ padding: 14 }}>
+                      {r.image && (
+                        <img src={`/api/media/recipes/${r.id}/images/min-original.webp`}
+                          style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 8, marginBottom: 10 }}
+                          onError={e => e.target.style.display = "none"} />
+                      )}
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{r.name}</div>
+                      {(r.recipeCategory || []).slice(0, 2).map(c => (
+                        <span key={c.id} className="tag tag-orange" style={{ marginRight: 4, marginTop: 6, display: "inline-block" }}>{c.name}</span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ height: 300, display: "flex", alignItems: "center", justifyContent: "center", color: C.muted, flexDirection: "column", gap: 12 }}>
+              <Icon name="cookbook" size={48} color={C.border} />
+              Select a cookbook to view its recipes
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* AI Panel */}
+      {aiOpen && (
+        <div style={{ position: "fixed", inset: 0, background: "#000c", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 20 }}>
+          <div className="card fade-up" style={{ width: 680, maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexShrink: 0 }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 16 }}>✨ AI Cookbook Recommendations</div>
+                <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
+                  Uses Mealie's configured AI · {allRecipes.length} recipes in your library
+                  {aiModel && <span style={{ color: C.accent }}> · {aiModel}</span>}
+                </div>
+              </div>
+              <button className="btn-ghost" style={{ padding: "4px 8px" }}
+                onClick={() => { setAiOpen(false); setAiResults(null); setAiError(""); }}>
+                <Icon name="close" size={14} />
+              </button>
             </div>
 
-            <div style={{ fontWeight: 600, marginTop: 4 }}>Recipes in this Cookbook ({cbRecipes.length})</div>
-            {cbRecipes.length === 0 ? (
-              <div className="card" style={{ textAlign: "center", color: C.muted, padding: 40 }}>
-                No recipes matched this cookbook's filters.
+            <div style={{ flexShrink: 0, marginBottom: 16 }}>
+              <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                Focus (optional)
+              </label>
+              <textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)}
+                placeholder="e.g. Focus on quick weeknight dinners and holiday baking… or leave blank for general suggestions"
+                rows={2} style={{ marginBottom: 10 }} />
+              <button className="btn-primary" style={{ width: "100%", padding: 12, fontSize: 14 }}
+                onClick={generateAi} disabled={aiLoading}>
+                {aiLoading
+                  ? <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}><Spinner size={15} /> Analyzing your recipes…</span>
+                  : "✨ Generate Recommendations"}
+              </button>
+            </div>
+
+            {aiError && (
+              <div style={{ background: "#1f0a0a", border: `1px solid #3a1616`, borderRadius: 8, padding: "10px 14px", color: C.red, fontSize: 12, marginBottom: 12, flexShrink: 0 }}>
+                ⚠ {aiError}
               </div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-                {cbRecipes.map(r => (
-                  <div key={r.id} className="card" style={{ padding: 14 }}>
-                    {r.image && (
-                      <img src={`${api._base}/media/recipes/${r.id}/images/min-original.webp`}
-                        style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 8, marginBottom: 10 }}
-                        onError={e => e.target.style.display = "none"} />
-                    )}
-                    <div style={{ fontWeight: 500, fontSize: 13, lineHeight: 1.3 }}>{r.name}</div>
-                    {(r.recipeCategory || []).slice(0, 2).map(c => (
-                      <span key={c.id} className="tag tag-orange" style={{ marginRight: 4, marginTop: 6, display: "inline-block" }}>{c.name}</span>
-                    ))}
-                  </div>
-                ))}
+            )}
+
+            {aiResults && (
+              <div style={{ overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ fontSize: 13, color: C.muted, flexShrink: 0 }}>
+                  {aiResults.length} cookbook{aiResults.length !== 1 ? "s" : ""} suggested — click Review to add/remove recipes before creating
+                </div>
+                {aiResults.map((s, i) => {
+                  const color = cbColors[i % cbColors.length];
+                  const existing = (cookbooks || []).find(cb => cb.name.toLowerCase() === s.name.toLowerCase());
+                  const matchedRecipes = allRecipes.filter(r =>
+                    (s.recipeNames || []).some(n => n.toLowerCase() === r.name.toLowerCase())
+                  );
+                  const unmatchedNames = (s.recipeNames || []).filter(n =>
+                    !allRecipes.some(r => r.name.toLowerCase() === n.toLowerCase())
+                  );
+                  return (
+                    <div key={i} className="card" style={{ border: `1px solid ${color}33`, background: `${color}08` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                            <div style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+                            <div style={{ fontWeight: 700, fontSize: 15 }}>{s.name}</div>
+                            {existing && <span className="tag tag-yellow">exists — will merge</span>}
+                          </div>
+                          <div style={{ fontSize: 13, color: C.muted, lineHeight: 1.5 }}>{s.description}</div>
+                        </div>
+                        <button className="btn-primary" style={{ flexShrink: 0, marginLeft: 16, padding: "6px 16px", fontSize: 12 }}
+                          onClick={() => { setAiOpen(false); openReview(s); }}>
+                          Review →
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                        {matchedRecipes.length} matched recipes
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {matchedRecipes.slice(0, 12).map(r => (
+                          <span key={r.id} className="tag tag-muted">{r.name}</span>
+                        ))}
+                        {matchedRecipes.length > 12 && (
+                          <span className="tag tag-muted">+{matchedRecipes.length - 12} more</span>
+                        )}
+                        {unmatchedNames.map((n, j) => (
+                          <span key={j} className="tag tag-red" title="Not found in your collection">{n} ⚠</span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {!aiResults && !aiLoading && !aiError && (
+              <div style={{ textAlign: "center", padding: 40, color: C.muted, flex: 1 }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>✨</div>
+                Mealie's AI will analyze your recipe names, categories, and tags to suggest meaningful cookbook groupings.
               </div>
             )}
           </div>
-        ) : (
-          <div style={{
-            height: 300, display: "flex", alignItems: "center", justifyContent: "center",
-            color: C.muted, fontSize: 14, flexDirection: "column", gap: 12,
-          }}>
-            <Icon name="cookbook" size={48} color={C.border} />
-            Select a cookbook to view its recipes
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Create modal */}
       {creating && (
-        <div style={{
-          position: "fixed", inset: 0, background: "#000b",
-          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100,
-        }}>
+        <div style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
           <div className="card fade-up" style={{ width: 420 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
               <div style={{ fontWeight: 600 }}>New Cookbook</div>
@@ -1642,12 +2004,12 @@ function CookbooksSection({ api, addLog }) {
               </div>
               <div>
                 <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 6 }}>Description</label>
-                <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} rows={3} placeholder="Optional description…" />
+                <textarea value={newDesc} onChange={e => setNewDesc(e.target.value)} rows={3} placeholder="Optional…" />
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button className="btn-ghost" onClick={() => setCreating(false)}>Cancel</button>
                 <button className="btn-primary" onClick={createCookbook} disabled={saving || !newName}>
-                  {saving ? <Spinner size={13} /> : "Create Cookbook"}
+                  {saving ? <Spinner size={13} /> : "Create"}
                 </button>
               </div>
             </div>
@@ -1657,6 +2019,7 @@ function CookbooksSection({ api, addLog }) {
     </div>
   );
 }
+
 
 // ─── SECTION: Dashboard ───────────────────────────────────────────────────────
 function DashboardSection({ api, user, addLog, onNavigate }) {
@@ -1764,6 +2127,7 @@ export default function App() {
   const [globalLogs, setGlobalLogs] = useState([]);
   const [qualityResults, setQualityResults] = useState(null);
   const [recipeCache, setRecipeCache] = useState(null);
+  const [householdCache, setHouseholdCache] = useState(null);
 
   const addLog = useCallback((type, msg) => {
     const ts = new Date().toLocaleTimeString();
@@ -1917,7 +2281,7 @@ export default function App() {
             {tab === "quality"    && <DataQualitySection api={conn.api} addLog={addLog} savedResults={qualityResults} onSaveResults={setQualityResults} />}
             {tab === "images"     && <ImageSection      api={conn.api} addLog={addLog} />}
             {tab === "activity"   && <ActivitySection   api={conn.api} addLog={addLog} />}
-            {tab === "households" && <HouseholdsSection api={conn.api} addLog={addLog} />}
+            {tab === "households" && <HouseholdsSection api={conn.api} addLog={addLog} cache={householdCache} onCache={setHouseholdCache} />}
             {tab === "admin"      && <AdminSection      api={conn.api} addLog={addLog} />}
           </div>
 
@@ -2326,7 +2690,7 @@ function DataQualitySection({ api, addLog, savedResults, onSaveResults }) {
       const noSource = full.filter(r => !r.orgURL || r.orgURL.trim() === "");
       const noRating = full.filter(r => !r.rating || r.rating === 0);
 
-      const auditResults = { total: full.length, duplicates, noImage, noDesc, noIngredients, noInstructions, noTime, noTags, unparsed, noSource, noRating, recipes: full };
+      const auditResults = { total: full.length, duplicates, noImage, noDesc, noIngredients, noInstructions, noTime, noTags, unparsed, noSource, noRating, recipes: full, loadedAt: Date.now() };
       setResults(auditResults);
       onSaveResults(auditResults);
       addLog("ok", `Audit complete — ${full.length} recipes checked`);
@@ -2343,6 +2707,7 @@ function DataQualitySection({ api, addLog, savedResults, onSaveResults }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {results && <CacheHeader loadedAt={results.loadedAt} loading={loading} label="Audit results" onReload={runAudit} />}
       <div className="card" style={{ display: "flex", alignItems: "center", gap: 20 }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>Recipe Data Quality Audit</div>
@@ -2357,18 +2722,30 @@ function DataQualitySection({ api, addLog, savedResults, onSaveResults }) {
 
       {results && (() => {
         const checks = [
-          { key: "noImage",        label: "Image",            bad: results.noImage,        icon: "🖼️",  repair: null },
-          { key: "noDesc",         label: "Description",      bad: results.noDesc,         icon: "📝",  repair: null },
-          { key: "noIngredients",  label: "Ingredients",      bad: results.noIngredients,  icon: "🥕",  repair: null },
-          { key: "noInstructions", label: "Instructions",     bad: results.noInstructions, icon: "📋",  repair: null },
-          { key: "noTime",         label: "Time Info",        bad: results.noTime,         icon: "⏱️",  repair: null },
-          { key: "noTags",         label: "Tags / Categories", bad: results.noTags,        icon: "🏷️",  repair: null },
+          { key: "noImage",        label: "Image",            bad: results.noImage,        icon: "🖼️",  repair: null,
+            repipeNote: "Set images via the Image Manager tab" },
+          { key: "noDesc",         label: "Description",      bad: results.noDesc,         icon: "📝",
+            repair: async (r) => {
+              await api.patch(`/recipes/${r.slug}`, { description: r.name });
+              addLog("ok", `Set placeholder description for: ${r.name}`);
+            }},
+          { key: "noIngredients",  label: "Ingredients",      bad: results.noIngredients,  icon: "🥕",  repair: null,
+            repipeNote: "Add ingredients via the Recipe Editor" },
+          { key: "noInstructions", label: "Instructions",     bad: results.noInstructions, icon: "📋",  repair: null,
+            repipeNote: "Add instructions via the Recipe Editor" },
+          { key: "noTime",         label: "Time Info",        bad: results.noTime,         icon: "⏱️",  repair: null,
+            repipeNote: "Set times via the Recipe Editor" },
+          { key: "noTags",         label: "Tags / Categories", bad: results.noTags,        icon: "🏷️",  repair: null,
+            repipeNote: "Assign tags via the Bulk Operations tab" },
           { key: "unparsed",       label: "Parsed Ingredients", bad: results.unparsed,     icon: "⚡",
             repair: async (r) => {
-              const ings = (r.recipeIngredient || []).map(i => i.display || i.note || "");
+              const ings = (r.recipeIngredient || [])
+                .filter(i => i.display || i.note)
+                .map(i => i.display || i.note || "");
               if (!ings.length) return;
               const parsed = await api.post("/parser/ingredients", {
-                ingredients: ings.map(i => ({ ingredient: i })), parser: "nlp"
+                ingredients: ings,
+                parser: "nlp"
               });
               const updated = r.recipeIngredient.map((ing, idx) => ({
                 ...ing, ...(parsed[idx] ? {
@@ -2387,8 +2764,13 @@ function DataQualitySection({ api, addLog, savedResults, onSaveResults }) {
               addLog("ok", `Parsed: ${r.name}`);
             }
           },
-          { key: "noSource",       label: "Source URL",       bad: results.noSource,       icon: "🔗",  repair: null },
-          { key: "noRating",       label: "Rating",           bad: results.noRating,       icon: "⭐",  repair: null },
+          { key: "noSource",       label: "Source URL",       bad: results.noSource,       icon: "🔗",  repair: null,
+            repipeNote: "Set source URLs via the Recipe Editor" },
+          { key: "noRating",       label: "Rating",           bad: results.noRating,       icon: "⭐",
+            repair: async (r) => {
+              await api.patch(`/recipes/${r.slug}`, { rating: 3 });
+              addLog("ok", `Set default rating (3★) for: ${r.name}`);
+            }},
         ];
 
         return (
@@ -2468,29 +2850,35 @@ function DataQualitySection({ api, addLog, savedResults, onSaveResults }) {
                           ⚡ Auto-Repair All
                         </button>
                       )}
+                      {!c.repair && c.repipeNote && (
+                        <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>💡 {c.repipeNote}</span>
+                      )}
                       <span className="tag tag-red">{c.bad.length} recipes</span>
                     </div>
                   </div>
                   <table>
-                    <thead><tr><th>Recipe</th>{c.repair && <th style={{ width: 120 }}>Action</th>}</tr></thead>
+                    <thead><tr><th>Recipe</th>{(c.repair || c.repipeNote) && <th style={{ width: 140 }}>Action</th>}</tr></thead>
                     <tbody>
                       {displayed.map(r => (
                         <tr key={r.id}>
                           <td style={{ fontWeight: 500 }}>{r.name}</td>
-                          {c.repair && (
+                          {(c.repair || c.repipeNote) && (
                             <td>
-                              <button className="btn-success" style={{ fontSize: 11, padding: "3px 10px" }}
-                                onClick={async () => {
-                                  try { await c.repair(r); addLog("ok", `Fixed: ${r.name}`); runAudit(); }
-                                  catch(e) { addLog("error", `${r.name}: ${e.message}`); }
-                                }}>⚡ Fix</button>
+                              {c.repair
+                                ? <button className="btn-success" style={{ fontSize: 11, padding: "3px 10px" }}
+                                    onClick={async () => {
+                                      try { await c.repair(r); addLog("ok", `Fixed: ${r.name}`); runAudit(); }
+                                      catch(e) { addLog("error", `${r.name}: ${e.message}`); }
+                                    }}>⚡ Fix</button>
+                                : <span style={{ fontSize: 11, color: C.muted }}>Manual</span>
+                              }
                             </td>
                           )}
                         </tr>
                       ))}
                       {c.bad.length > 10 && (
                         <tr>
-                          <td colSpan={c.repair ? 2 : 1} style={{ textAlign: "center", padding: 10 }}>
+                          <td colSpan={(c.repair || c.repipeNote) ? 2 : 1} style={{ textAlign: "center", padding: 10 }}>
                             <button className="btn-ghost" style={{ fontSize: 12, padding: "4px 16px" }}
                               onClick={() => setExpanded(e => ({ ...e, [c.key]: !e[c.key] }))}>
                               {showAll
@@ -2638,13 +3026,15 @@ function AdminSection({ api, addLog }) {
                       <td style={{ fontSize: 12 }}>{u.household || "—"}</td>
                       <td>
                         <button onClick={() => toggleAdmin(u)} className={`tag ${u.admin ? "tag-orange" : "tag-muted"}`}
-                          style={{ cursor: "pointer", border: "none" }}>
+                          style={{ cursor: "pointer", border: "none" }}
+                          title={u.admin ? "Click to remove admin role" : "Click to grant admin role"}>
                           {u.admin ? "admin" : "user"}
                         </button>
                       </td>
                       <td>
                         <button onClick={() => toggleEnabled(u)} className={`tag ${u.enabled !== false ? "tag-green" : "tag-red"}`}
-                          style={{ cursor: "pointer", border: "none" }}>
+                          style={{ cursor: "pointer", border: "none" }}
+                          title={u.enabled !== false ? "Click to disable this account" : "Click to enable this account"}>
                           {u.enabled !== false ? "active" : "disabled"}
                         </button>
                       </td>
@@ -2828,7 +3218,7 @@ function ImageSection({ api, addLog }) {
                 background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center",
               }}>
                 {r.image
-                  ? <img src={`${api._base}/media/recipes/${r.id}/images/min-original.webp`}
+                  ? <img src={`/api/media/recipes/${r.id}/images/min-original.webp`}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       onError={e => e.target.style.display = "none"} />
                   : <span style={{ fontSize: 28 }}>🍽️</span>
