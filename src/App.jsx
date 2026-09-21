@@ -1573,9 +1573,16 @@ function CookbooksSection({ api, addLog }) {
         page++;
       }
       setAllRecipes(all);
-      // Check if AI is enabled
-      const about = await api.get("/app/about").catch(() => ({}));
-      setAiEnabled(!!(about.openaiEnabled || about.aiEnabled));
+      // Check if AI is enabled via server-side probe
+      try {
+        const aiCheck = await fetch("/ai-check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mealieUrl: api._base, token: api._token }),
+        });
+        const aiData = await aiCheck.json();
+        setAiEnabled(!!aiData.enabled);
+      } catch { setAiEnabled(false); }
     } catch (e) { addLog("error", e.message); }
     setLoading(false);
   }, [api]);
@@ -1866,7 +1873,7 @@ function CookbooksSection({ api, addLog }) {
                   {cbRecipes.map(r => (
                     <div key={r.id} className="card" style={{ padding: 14 }}>
                       {r.image && (
-                        <img src={`/api/media/recipes/${r.id}/images/min-original.webp`}
+                        <img src={`/img?src=media/recipes/${r.id}/images/min-original.webp&mealie=${encodeURIComponent(api._base)}&token=${encodeURIComponent(api._token)}`}
                           style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 8, marginBottom: 10 }}
                           onError={e => e.target.style.display = "none"} />
                       )}
@@ -3218,7 +3225,7 @@ function ImageSection({ api, addLog }) {
                 background: C.surfaceAlt, display: "flex", alignItems: "center", justifyContent: "center",
               }}>
                 {r.image
-                  ? <img src={`/api/media/recipes/${r.id}/images/min-original.webp`}
+                  ? <img src={`/img?src=media/recipes/${r.id}/images/min-original.webp&mealie=${encodeURIComponent(api._base)}&token=${encodeURIComponent(api._token)}`}
                       style={{ width: "100%", height: "100%", objectFit: "cover" }}
                       onError={e => e.target.style.display = "none"} />
                   : <span style={{ fontSize: 28 }}>🍽️</span>
