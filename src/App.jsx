@@ -1544,8 +1544,6 @@ function CookbooksSection({ api, addLog }) {
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [saving, setSaving] = useState(false);
-  const [aiEnabled, setAiEnabled] = useState(false);
-
   // AI state
   const [aiOpen, setAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
@@ -1553,6 +1551,14 @@ function CookbooksSection({ api, addLog }) {
   const [aiResults, setAiResults] = useState(null);
   const [aiError, setAiError] = useState("");
   const [aiModel, setAiModel] = useState("");
+  // AI provider info from Mealie
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiProviderName, setAiProviderName] = useState("");
+  const [aiConfigured, setAiConfigured] = useState(false);
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiBaseUrl, setAiBaseUrl] = useState("");
+  const [aiModelInput, setAiModelInput] = useState("");
+  const [showAiConfig, setShowAiConfig] = useState(false);
 
   // Review state — after AI generates, user picks recipes per suggestion
   const [reviewing, setReviewing] = useState(null); // single suggestion being reviewed
@@ -1573,15 +1579,22 @@ function CookbooksSection({ api, addLog }) {
         page++;
       }
       setAllRecipes(all);
-      // Check if AI is enabled via server-side probe
+
+      // Check if Mealie has AI configured and pre-fill provider settings
       try {
-        const aiCheck = await fetch("/ai-check", {
+        const aiInfo = await fetch("/ai-info", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ mealieUrl: api._base, token: api._token }),
-        });
-        const aiData = await aiCheck.json();
-        setAiEnabled(!!aiData.enabled);
+        }).then(r => r.json());
+        if (aiInfo.aiEnabled) {
+          setAiEnabled(true);
+          setAiProviderName(aiInfo.providerName || "");
+          setAiBaseUrl(aiInfo.baseUrl || "");
+          setAiModelInput(aiInfo.model || "");
+        } else {
+          setAiEnabled(false);
+        }
       } catch { setAiEnabled(false); }
     } catch (e) { addLog("error", e.message); }
     setLoading(false);
@@ -1627,11 +1640,12 @@ function CookbooksSection({ api, addLog }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mealieUrl: api._base,
-          token: api._token,
           recipes: allRecipes,
           cookbooks: cookbooks || [],
           prompt: aiPrompt,
+          aiApiKey,
+          aiBaseUrl,
+          aiModel: aiModelInput,
         }),
       });
       const data = await res.json();
@@ -1805,8 +1819,11 @@ function CookbooksSection({ api, addLog }) {
             <div style={{ display: "flex", gap: 6 }}>
               {aiEnabled && (
                 <button className="btn-ghost" style={{ padding: "5px 10px", fontSize: 12, color: "#a855f7", borderColor: "#a855f744" }}
-                  title="Generate cookbook recommendations using Mealie's configured AI"
-                  onClick={() => { setAiOpen(true); setAiResults(null); setAiError(""); }}>
+                  title={`Generate AI cookbook recommendations using ${aiProviderName}`}
+                  onClick={() => {
+                    if (!aiConfigured) { setShowAiConfig(true); }
+                    else { setAiOpen(true); setAiResults(null); setAiError(""); }
+                  }}>
                   ✨ AI
                 </button>
               )}
@@ -1903,14 +1920,19 @@ function CookbooksSection({ api, addLog }) {
               <div>
                 <div style={{ fontWeight: 700, fontSize: 16 }}>✨ AI Cookbook Recommendations</div>
                 <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>
-                  Uses Mealie's configured AI · {allRecipes.length} recipes in your library
-                  {aiModel && <span style={{ color: C.accent }}> · {aiModel}</span>}
+                  {aiProviderName} · {aiModelInput} · {allRecipes.length} recipes
                 </div>
               </div>
-              <button className="btn-ghost" style={{ padding: "4px 8px" }}
-                onClick={() => { setAiOpen(false); setAiResults(null); setAiError(""); }}>
-                <Icon name="close" size={14} />
-              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button className="btn-ghost" style={{ padding: "4px 10px", fontSize: 11 }}
+                  onClick={() => { setAiOpen(false); setShowAiConfig(true); }}>
+                  ⚙ Config
+                </button>
+                <button className="btn-ghost" style={{ padding: "4px 8px" }}
+                  onClick={() => { setAiOpen(false); setAiResults(null); setAiError(""); }}>
+                  <Icon name="close" size={14} />
+                </button>
+              </div>
             </div>
 
             <div style={{ flexShrink: 0, marginBottom: 16 }}>
@@ -1990,6 +2012,52 @@ function CookbooksSection({ api, addLog }) {
                 Mealie's AI will analyze your recipe names, categories, and tags to suggest meaningful cookbook groupings.
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* AI Config Modal */}
+      {showAiConfig && (
+        <div style={{ position: "fixed", inset: 0, background: "#000b", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div className="card fade-up" style={{ width: 480 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ fontWeight: 700, fontSize: 16 }}>✨ AI Configuration</div>
+              <button className="btn-ghost" style={{ padding: "4px 8px" }} onClick={() => setShowAiConfig(false)}>
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 16, lineHeight: 1.6 }}>
+              PowerTools detected your Mealie AI provider. The API key is not exposed by Mealie's API for security — enter it once below. It's stored in your browser session only.
+            </div>
+
+            {/* Pre-filled provider info */}
+            <div style={{ background: C.surfaceAlt, borderRadius: 8, padding: "12px 14px", marginBottom: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+              {[
+                ["Provider", aiProviderName],
+                ["Base URL", aiBaseUrl || "https://api.openai.com/v1"],
+                ["Model", aiModelInput],
+              ].map(([k, v]) => (
+                <div key={k} style={{ display: "flex", gap: 12, fontSize: 12 }}>
+                  <span style={{ color: C.muted, minWidth: 70 }}>{k}</span>
+                  <span className="mono" style={{ color: C.text }}>{v}</span>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, color: C.muted, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: ".06em" }}>API Key</label>
+                <input type="password" value={aiApiKey} onChange={e => setAiApiKey(e.target.value)}
+                  placeholder="Your API key for this provider" autoFocus />
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
+                <button className="btn-ghost" onClick={() => setShowAiConfig(false)}>Cancel</button>
+                <button className="btn-primary" disabled={!aiApiKey}
+                  onClick={() => { setAiConfigured(true); setShowAiConfig(false); setAiOpen(true); setAiResults(null); setAiError(""); }}>
+                  Save & Generate →
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

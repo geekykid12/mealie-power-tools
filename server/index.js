@@ -26,113 +26,76 @@ function getProxy(target) {
   return proxyCache.get(target);
 }
 
+// ── Helper ─────────────────────────────────────────────────────────────────────
+async function mealieJson(url, token) {
+  const r = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  const text = await r.text();
+  if (text.trimStart().startsWith("<")) throw new Error(`Route not found: ${url}`);
+  return JSON.parse(text);
+}
+
 // ── Static frontend ────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, "../dist")));
 
-// ── AI config check ────────────────────────────────────────────────────────────
-// Probes Mealie's admin server-info endpoint to determine if OpenAI is configured
-app.post("/ai-check", async (req, res) => {
+// ── AI provider info ───────────────────────────────────────────────────────────
+// Returns whether AI is configured and the default provider's baseUrl + model
+// The API key is never exposed by Mealie so the user must supply it separately
+app.post("/ai-info", async (req, res) => {
   const { mealieUrl, token } = req.body;
   if (!mealieUrl || !token) return res.status(400).json({ error: "Missing params" });
 
   try {
-    // Try admin/server-info which may contain openai config in some versions
-    const infoRes = await fetch(`${mealieUrl}/admin/server-info`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    // 1. Get settings — tells us aiEnabled + defaultProviderId + groupId indirectly
+    const settings = await mealieJson(`${mealieUrl}/groups/ai-providers/settings`, token);
+    if (!settings.aiEnabled || !settings.defaultProviderId) {
+      return res.json({ aiEnabled: false });
+    }
 
-    if (infoRes.ok) {
-      const info = await infoRes.json();
-      // Mealie exposes openaiEnabled in some versions via server-info
-      const enabled = !!(
-        info.openaiEnabled ||
-        info.openaiApiKey ||
-        info.enableOpenai
+    // 2. Get the user's group to find the groupId
+    const group = await mealieJson(`${mealieUrl}/groups/self`, token);
+    const groupId = group.id;
+
+    // 3. Fetch the default provider's config via admin endpoint (no apiKey returned)
+    let providerName = "", baseUrl = "", model = "";
+    try {
+      const provider = await mealieJson(
+        `${mealieUrl}/admin/groups/${groupId}/ai-providers/providers/${settings.defaultProviderId}`,
+        token
       );
-      if (enabled) return res.json({ enabled: true, source: "server-info" });
+      providerName = provider.name || "";
+      baseUrl = provider.baseUrl || "";
+      model = provider.model || provider.name || "";
+    } catch {
+      // Admin endpoint failed — use name from settings list as fallback
+      const p = (settings.providers || []).find(p => p.id === settings.defaultProviderId);
+      providerName = p?.name || "";
+      model = p?.name || "";
     }
 
-    // Fallback: probe the parser with a trivial ingredient using openai parser
-    // If OpenAI isn't configured Mealie returns a 400 or specific error message
-    const probeRes = await fetch(`${mealieUrl}/parser/ingredients`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ ingredients: ["1 cup flour"], parser: "openai" }),
-    });
-
-    if (probeRes.ok) {
-      return res.json({ enabled: true, source: "probe" });
-    }
-
-    // Check if error says "not configured" vs generic error
-    const errText = await probeRes.text().catch(() => "");
-    const notConfigured = errText.toLowerCase().includes("openai") &&
-      (errText.toLowerCase().includes("not configured") ||
-       errText.toLowerCase().includes("disabled") ||
-       errText.toLowerCase().includes("no api key"));
-
-    return res.json({ enabled: !notConfigured && probeRes.status !== 500, source: "probe", status: probeRes.status });
+    res.json({ aiEnabled: true, providerName, baseUrl, model });
   } catch (e) {
-    console.error("[ai-check]", e.message);
-    res.json({ enabled: false, error: e.message });
+    console.error("[ai-info]", e.message);
+    res.json({ aiEnabled: false, error: e.message });
   }
 });
 
 // ── AI Cookbook endpoint ───────────────────────────────────────────────────────
-// Makes the OpenAI call server-side using Mealie's configured credentials
 app.post("/ai-cookbook", async (req, res) => {
-  const { mealieUrl, token, recipes, cookbooks, prompt } = req.body;
-  if (!mealieUrl || !token) return res.status(400).json({ error: "Missing mealieUrl or token" });
+  const { recipes, cookbooks, prompt, aiApiKey, aiBaseUrl, aiModel } = req.body;
+  if (!aiApiKey) return res.status(400).json({ error: "Missing AI API key" });
+
+  const baseUrl = (aiBaseUrl || "https://api.openai.com/v1").replace(/\/$/, "");
+  const model = aiModel || "gpt-4o-mini";
 
   try {
-    // Fetch AI provider config from Mealie admin endpoint
-    let apiKey = null;
-    let aiBaseUrl = "https://api.openai.com/v1";
-    let model = "gpt-4o-mini";
-
-    const infoRes = await fetch(`${mealieUrl}/admin/server-info`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (infoRes.ok) {
-      const info = await infoRes.json();
-      if (info.openaiApiKey) apiKey = info.openaiApiKey;
-      if (info.openaiBaseUrl) aiBaseUrl = info.openaiBaseUrl.replace(/\/$/, "");
-      if (info.openaiModel) model = info.openaiModel;
-    }
-
-    // Try newer multi-provider endpoint
-    if (!apiKey) {
-      const provRes = await fetch(`${mealieUrl}/admin/ai-providers`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (provRes.ok) {
-        const prov = await provRes.json();
-        const providers = Array.isArray(prov) ? prov : (prov.items || []);
-        const p = providers.find(x => x.isDefault) || providers[0];
-        if (p) {
-          apiKey = p.apiKey;
-          if (p.baseUrl) aiBaseUrl = p.baseUrl.replace(/\/$/, "");
-          if (p.model) model = p.model;
-        }
-      }
-    }
-
-    if (!apiKey) {
-      return res.status(503).json({
-        error: "OpenAI is not configured in Mealie. Add OPENAI_API_KEY to your Mealie environment variables and restart."
-      });
-    }
-
-    // Build prompt
     const recipeList = recipes.map(r => {
       const cats = (r.recipeCategory || []).map(c => c.name).join(", ");
       const tags = (r.tags || []).map(t => t.name).join(", ");
       return `- ${r.name}${cats ? ` [${cats}]` : ""}${tags ? ` #${tags}` : ""}`;
     }).join("\n");
-
     const existingCbs = (cookbooks || []).map(c => c.name).join(", ");
 
     const messages = [
@@ -142,16 +105,13 @@ app.post("/ai-cookbook", async (req, res) => {
       },
       {
         role: "user",
-        content: `I have ${recipes.length} recipes:\n${recipeList}\n\n${existingCbs ? `Existing cookbooks (avoid exact duplicates, suggest merging if similar): ${existingCbs}\n\n` : ""}${prompt ? `User request: ${prompt}\n\n` : ""}Suggest 3-5 cookbooks. Respond with a JSON array where each item has: name (string), description (string, 1-2 sentences), recipeNames (array of exact recipe name strings from my list that belong in this cookbook). Example: [{"name":"Quick Weeknight Dinners","description":"Fast recipes ready in 30 minutes.","recipeNames":["Pasta Carbonara","Stir Fry Chicken"]}]`
+        content: `I have ${recipes.length} recipes:\n${recipeList}\n\n${existingCbs ? `Existing cookbooks (avoid exact duplicates): ${existingCbs}\n\n` : ""}${prompt ? `User request: ${prompt}\n\n` : ""}Suggest 3-5 cookbooks. Respond with a JSON array where each item has: name (string), description (string, 1-2 sentences), recipeNames (array of exact recipe name strings from my list). Example: [{"name":"Quick Weeknight Dinners","description":"Fast recipes ready in 30 minutes.","recipeNames":["Pasta Carbonara","Stir Fry Chicken"]}]`
       }
     ];
 
-    const aiRes = await fetch(`${aiBaseUrl}/chat/completions`, {
+    const aiRes = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${aiApiKey}` },
       body: JSON.stringify({ model, max_tokens: 2000, temperature: 0.7, messages }),
     });
 
@@ -171,18 +131,14 @@ app.post("/ai-cookbook", async (req, res) => {
   }
 });
 
-// ── Image proxy — serve Mealie media through the proxy ────────────────────────
-// Images are loaded with /api/media/... but that goes through the Mealie proxy
-// which requires X-Mealie-Url header. Since <img> tags can't set headers,
-// we need a separate image proxy endpoint that reads the URL from a query param.
+// ── Image proxy ────────────────────────────────────────────────────────────────
 app.get("/img", async (req, res) => {
-  const { src, mealie } = req.query;
+  const { src, mealie, token } = req.query;
   if (!src || !mealie) return res.status(400).send("Missing src or mealie param");
   try {
     const url = `${decodeURIComponent(mealie)}/${src.replace(/^\//, "")}`;
-    const token = req.query.token || "";
     const imgRes = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: token ? { Authorization: `Bearer ${decodeURIComponent(token)}` } : {},
     });
     if (!imgRes.ok) return res.status(imgRes.status).send("Image fetch failed");
     res.set("Content-Type", imgRes.headers.get("content-type") || "image/webp");
