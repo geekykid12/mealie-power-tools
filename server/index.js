@@ -83,6 +83,27 @@ app.post("/ai-info", async (req, res) => {
 });
 
 // ── AI Cookbook endpoint ───────────────────────────────────────────────────────
+
+// Robustly extract a JSON array from an AI response that may include
+// surrounding text, markdown fences, or explanation before/after the JSON.
+function extractJsonArray(text) {
+  let s = text.replace(/```json\s*/gi, "").replace(/```/g, "").trim();
+  // Try direct parse
+  try { const r = JSON.parse(s); if (Array.isArray(r)) return r; } catch {}
+  // Find first [ and last ]
+  const start = s.indexOf("[");
+  const end   = s.lastIndexOf("]");
+  if (start !== -1 && end > start) {
+    try { const r = JSON.parse(s.slice(start, end + 1)); if (Array.isArray(r)) return r; } catch {}
+  }
+  // Regex scan for array
+  const match = s.match(/\[[\s\S]*\]/);
+  if (match) {
+    try { const r = JSON.parse(match[0]); if (Array.isArray(r)) return r; } catch {}
+  }
+  throw new Error("Could not extract JSON array from AI response. Raw: " + text.slice(0, 200));
+}
+
 app.post("/ai-cookbook", async (req, res) => {
   const { recipes, cookbooks, prompt, aiApiKey, aiBaseUrl, aiModel } = req.body;
   if (!aiApiKey) return res.status(400).json({ error: "Missing AI API key" });
@@ -93,26 +114,33 @@ app.post("/ai-cookbook", async (req, res) => {
   try {
     const recipeList = recipes.map(r => {
       const cats = (r.recipeCategory || []).map(c => c.name).join(", ");
-      const tags = (r.tags || []).map(t => t.name).join(", ");
+      const tags  = (r.tags || []).map(t => t.name).join(", ");
       return `- ${r.name}${cats ? ` [${cats}]` : ""}${tags ? ` #${tags}` : ""}`;
     }).join("\n");
     const existingCbs = (cookbooks || []).map(c => c.name).join(", ");
 
-    const messages = [
-      {
-        role: "system",
-        content: "You are a helpful cookbook organizer. Analyze a recipe collection and suggest meaningful cookbook groupings. Return ONLY valid JSON — no markdown, no explanation, no code fences."
-      },
-      {
-        role: "user",
-        content: `I have ${recipes.length} recipes:\n${recipeList}\n\n${existingCbs ? `Existing cookbooks (avoid exact duplicates): ${existingCbs}\n\n` : ""}${prompt ? `User request: ${prompt}\n\n` : ""}Suggest 3-5 cookbooks. Respond with a JSON array where each item has: name (string), description (string, 1-2 sentences), recipeNames (array of exact recipe name strings from my list). Example: [{"name":"Quick Weeknight Dinners","description":"Fast recipes ready in 30 minutes.","recipeNames":["Pasta Carbonara","Stir Fry Chicken"]}]`
-      }
-    ];
+    const systemPrompt = "You are a cookbook organizer. You MUST respond with ONLY a valid JSON array. No explanation, no preamble, no markdown, no code fences. Start your response with [ and end with ]. Nothing else.";
+    const userPrompt = `I have ${recipes.length} recipes:\n${recipeList}\n${existingCbs ? "\nExisting cookbooks (avoid exact duplicates): " + existingCbs + "\n" : ""}${prompt ? "\nUser request: " + prompt + "\n" : ""}\nSuggest 3-5 cookbooks. YOUR ENTIRE RESPONSE must be a JSON array. Each item: {"name":"...","description":"1-2 sentences","recipeNames":["exact recipe name from my list"]}`;
 
+    const body = {
+      model,
+      max_tokens: 2000,
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: userPrompt   },
+      ],
+    };
+
+    // Gemini supports response_format to force JSON output
+    const isGemini = baseUrl.includes("googleapis.com") || baseUrl.includes("generativelanguage");
+    if (isGemini) body.response_format = { type: "json_object" };
+
+    console.log("[ai-cookbook] calling", baseUrl, "model:", model);
     const aiRes = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${aiApiKey}` },
-      body: JSON.stringify({ model, max_tokens: 2000, temperature: 0.7, messages }),
+      body: JSON.stringify(body),
     });
 
     if (!aiRes.ok) {
@@ -120,17 +148,17 @@ app.post("/ai-cookbook", async (req, res) => {
       throw new Error(`AI API ${aiRes.status}: ${err.slice(0, 300)}`);
     }
 
-    const aiData = await aiRes.json();
-    const text = aiData.choices?.[0]?.message?.content || "";
-    const clean = text.replace(/```json|```/g, "").trim();
-    const suggestions = JSON.parse(clean);
+    const aiData  = await aiRes.json();
+    const rawText = aiData.choices?.[0]?.message?.content || "";
+    console.log("[ai-cookbook] raw response:", rawText.slice(0, 300));
+
+    const suggestions = extractJsonArray(rawText);
     res.json({ suggestions, model });
   } catch (e) {
     console.error("[ai-cookbook]", e.message);
     res.status(500).json({ error: e.message });
   }
 });
-
 // ── Image proxy ────────────────────────────────────────────────────────────────
 app.get("/img", async (req, res) => {
   const { src, mealie, token } = req.query;

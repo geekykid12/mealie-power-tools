@@ -220,23 +220,70 @@ function makeApi(baseUrl, token) {
 }
 
 // ─── Connection Setup ─────────────────────────────────────────────────────────
+const LS_URL   = "mpt_url";
+const LS_TOKEN = "mpt_token";
+
 function ConnectPanel({ onConnect }) {
-  const [url, setUrl] = useState("http://127.0.0.1:9925/api");
-  const [token, setToken] = useState("");
+  const [url, setUrl]       = useState(() => {
+    try { return localStorage.getItem(LS_URL) || "http://127.0.0.1:9925/api"; } catch { return "http://127.0.0.1:9925/api"; }
+  });
+  const [token, setToken]   = useState(() => {
+    try { return localStorage.getItem(LS_TOKEN) || ""; } catch { return ""; }
+  });
+  const [remember, setRemember] = useState(() => {
+    try { return !!localStorage.getItem(LS_TOKEN); } catch { return false; }
+  });
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [err, setErr]         = useState("");
+
+  // Auto-connect on mount if saved credentials exist
+  const [autoConnecting, setAutoConnecting] = useState(() => {
+    try { return !!localStorage.getItem(LS_TOKEN); } catch { return false; }
+  });
+
+  useEffect(() => {
+    if (!autoConnecting) return;
+    (async () => {
+      try {
+        const api = makeApi(url, token);
+        const user = await api.get("/users/self");
+        onConnect({ url, token, user, api });
+      } catch {
+        // Saved credentials invalid — clear and show form
+        try { localStorage.removeItem(LS_URL); localStorage.removeItem(LS_TOKEN); } catch {}
+        setAutoConnecting(false);
+      }
+    })();
+  }, []);
 
   const test = async () => {
     setLoading(true); setErr("");
     try {
       const api = makeApi(url, token);
       const user = await api.get("/users/self");
+      if (remember) {
+        try { localStorage.setItem(LS_URL, url); localStorage.setItem(LS_TOKEN, token); } catch {}
+      } else {
+        try { localStorage.removeItem(LS_URL); localStorage.removeItem(LS_TOKEN); } catch {}
+      }
       onConnect({ url, token, user, api });
     } catch (e) {
       setErr(e.message);
     }
     setLoading(false);
   };
+
+  if (autoConnecting) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.bg }}>
+        <style>{css}</style>
+        <div style={{ textAlign: "center", color: C.muted }}>
+          <Spinner size={32} />
+          <div style={{ marginTop: 16, fontSize: 13 }}>Reconnecting…</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -276,13 +323,28 @@ function ConnectPanel({ onConnect }) {
               API Token
             </label>
             <input type="password" value={token} onChange={e => setToken(e.target.value)}
-              placeholder="Bearer token from Mealie profile" />
+              placeholder="Bearer token from Mealie profile"
+              onKeyDown={e => e.key === "Enter" && token && test()} />
           </div>
           {err && (
             <div style={{ background: "#1f0a0a", border: "1px solid #3a1616", borderRadius: 8, padding: "10px 14px", color: C.red, fontSize: 12 }}>
               ⚠ {err}
             </div>
           )}
+          {/* Remember me */}
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13 }}>
+            <div style={{
+              width: 36, height: 20, borderRadius: 10, transition: "background .2s",
+              background: remember ? C.accent : C.border, position: "relative", flexShrink: 0,
+            }} onClick={() => setRemember(r => !r)}>
+              <div style={{
+                position: "absolute", top: 2, left: remember ? 18 : 2,
+                width: 16, height: 16, borderRadius: "50%", background: "#fff",
+                transition: "left .2s",
+              }} />
+            </div>
+            <span style={{ color: C.muted }}>Remember me on this device</span>
+          </label>
           <button className="btn-primary" style={{ width: "100%", padding: "12px" }} onClick={test} disabled={loading || !token}>
             {loading ? <Spinner size={14} /> : "Connect →"}
           </button>
@@ -2325,6 +2387,14 @@ export default function App() {
           <button className="btn-ghost" style={{ width: "100%", marginTop: 10, fontSize: 11, padding: "6px" }}
             onClick={() => setConn(null)}>
             Disconnect
+          </button>
+          <button className="btn-ghost" style={{ width: "100%", marginTop: 4, fontSize: 10, padding: "4px", opacity: .6 }}
+            title="Remove saved URL and token from this browser"
+            onClick={() => {
+              try { localStorage.removeItem("mpt_url"); localStorage.removeItem("mpt_token"); } catch {}
+              setConn(null);
+            }}>
+            Forget saved credentials
           </button>
           <div style={{ textAlign: "center", marginTop: 10, fontSize: 10, color: C.muted, opacity: .5 }}>
             v{VERSION}
