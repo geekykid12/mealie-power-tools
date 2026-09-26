@@ -220,8 +220,9 @@ function makeApi(baseUrl, token) {
 }
 
 // ─── Connection Setup ─────────────────────────────────────────────────────────
-const LS_URL   = "mpt_url";
-const LS_TOKEN = "mpt_token";
+const LS_URL    = "mpt_url";
+const LS_TOKEN  = "mpt_token";
+const LS_AI_KEY = "mpt_ai_key";
 
 function ConnectPanel({ onConnect }) {
   const [url, setUrl]       = useState(() => {
@@ -1616,10 +1617,14 @@ function CookbooksSection({ api, addLog }) {
   // AI provider info from Mealie
   const [aiEnabled, setAiEnabled] = useState(false);
   const [aiProviderName, setAiProviderName] = useState("");
-  const [aiConfigured, setAiConfigured] = useState(false);
-  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiApiKey, setAiApiKey] = useState(() => {
+    try { return localStorage.getItem(LS_AI_KEY) || ""; } catch { return ""; }
+  });
   const [aiBaseUrl, setAiBaseUrl] = useState("");
   const [aiModelInput, setAiModelInput] = useState("");
+  const [aiConfigured, setAiConfigured] = useState(() => {
+    try { return !!localStorage.getItem(LS_AI_KEY); } catch { return false; }
+  });
   const [showAiConfig, setShowAiConfig] = useState(false);
 
   // Review state — after AI generates, user picks recipes per suggestion
@@ -2115,7 +2120,10 @@ function CookbooksSection({ api, addLog }) {
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 4 }}>
                 <button className="btn-ghost" onClick={() => setShowAiConfig(false)}>Cancel</button>
                 <button className="btn-primary" disabled={!aiApiKey}
-                  onClick={() => { setAiConfigured(true); setShowAiConfig(false); setAiOpen(true); setAiResults(null); setAiError(""); }}>
+                  onClick={() => {
+                    try { localStorage.setItem(LS_AI_KEY, aiApiKey); } catch {}
+                    setAiConfigured(true); setShowAiConfig(false); setAiOpen(true); setAiResults(null); setAiError("");
+                  }}>
                   Save & Generate →
                 </button>
               </div>
@@ -2391,7 +2399,11 @@ export default function App() {
           <button className="btn-ghost" style={{ width: "100%", marginTop: 4, fontSize: 10, padding: "4px", opacity: .6 }}
             title="Remove saved URL and token from this browser"
             onClick={() => {
-              try { localStorage.removeItem("mpt_url"); localStorage.removeItem("mpt_token"); } catch {}
+              try {
+                localStorage.removeItem("mpt_url");
+                localStorage.removeItem("mpt_token");
+                localStorage.removeItem(LS_AI_KEY);
+              } catch {}
               setConn(null);
             }}>
             Forget saved credentials
