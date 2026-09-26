@@ -119,8 +119,20 @@ app.post("/ai-cookbook", async (req, res) => {
     }).join("\n");
     const existingCbs = (cookbooks || []).map(c => c.name).join(", ");
 
-    const systemPrompt = "You are a cookbook organizer. You MUST respond with ONLY a valid JSON array. No explanation, no preamble, no markdown, no code fences. Start your response with [ and end with ]. Nothing else.";
-    const userPrompt = `I have ${recipes.length} recipes:\n${recipeList}\n${existingCbs ? "\nExisting cookbooks (avoid exact duplicates): " + existingCbs + "\n" : ""}${prompt ? "\nUser request: " + prompt + "\n" : ""}\nSuggest 3-5 cookbooks. YOUR ENTIRE RESPONSE must be a JSON array. Each item: {"name":"...","description":"1-2 sentences","recipeNames":["exact recipe name from my list"]}`;
+    const systemPrompt = `You are a personal recipe collection organizer. Your job is to group a user's actual saved recipes into meaningful CATEGORY-based collections (like "Quick Weeknight Dinners", "Soups & Stews", "Meal Prep", "Vegetarian", "Party Food", etc.). IMPORTANT RULES:
+- Do NOT suggest real published cookbook titles (not "Jerusalem: A Cookbook", not "The Food Lab", etc.)
+- Do NOT invent recipe names — only use recipes from the user's list
+- Suggest 3-5 practical, themed categories that would actually help organize THEIR specific collection
+- Each category name should be short and descriptive (2-5 words)
+- You MUST respond with ONLY a valid JSON array. No explanation, no preamble, no markdown, no code fences. Start with [ and end with ].`;
+
+    const userPrompt = `Here are my ${recipes.length} saved recipes:
+${recipeList}
+${existingCbs ? "\nI already have these collections (avoid duplicating): " + existingCbs + "\n" : ""}
+${prompt ? "Special request: " + prompt + "\n" : ""}
+Group these into 3-5 themed collections using ONLY the recipe names above. Return a JSON array where each item is: {"name":"Short Category Name","description":"One sentence about what unifies these recipes","recipeNames":["Exact Recipe Name From My List Above"]}
+
+Remember: use only recipe names from my list above, and name the collections as practical categories, NOT published book titles.`;
 
     const body = {
       model,
@@ -159,6 +171,79 @@ app.post("/ai-cookbook", async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ── AI Taxonomy endpoint ───────────────────────────────────────────────────────
+app.post("/ai-taxonomy", async (req, res) => {
+  const { recipes, existingItems, type, prompt, aiApiKey, aiBaseUrl, aiModel } = req.body;
+  if (!aiApiKey) return res.status(400).json({ error: "Missing AI API key" });
+
+  const baseUrl = (aiBaseUrl || "https://api.openai.com/v1").replace(/\/$/, "");
+  const model = aiModel || "gpt-4o-mini";
+
+  const isCategory = type === "categories";
+  const typeSingular = isCategory ? "category" : "tag";
+  const typePlural = isCategory ? "categories" : "tags";
+
+  const examples = isCategory
+    ? "Breakfast, Lunch, Dinner, Appetizer, Soup, Salad, Dessert, Snack, Side Dish, Drinks, Baking, Vegetarian, Vegan, Gluten-Free"
+    : "Quick, Easy, Healthy, Spicy, Comfort Food, Meal Prep, Kid-Friendly, Date Night, Holiday, Summer, Winter";
+
+  try {
+    const recipeList = recipes.map(r => `- ${r.name}`).join("\n");
+    const existing = (existingItems || []).map(i => i.name).join(", ");
+
+    const systemPrompt = `You are a recipe collection organizer. Your job is to suggest useful ${typePlural} to help organize a recipe collection. RULES:
+- Suggest practical, short ${typePlural} (1-4 words each) that genuinely describe the recipes
+- Do NOT suggest ${typePlural} that already exist
+- Focus on ${isCategory ? "meal types, cuisine styles, and dietary categories" : "recipe characteristics and attributes"}
+- Examples of good ${typePlural}: ${examples}
+- You MUST respond with ONLY a valid JSON array. No explanation, no markdown. Start with [ and end with ].`;
+
+    const userPrompt = `Here are my ${recipes.length} recipes:
+${recipeList}
+${existing ? "\nAlready have these ${typePlural} (do NOT suggest these): " + existing + "\n" : ""}
+${prompt ? "User request: " + prompt + "\n" : ""}
+Suggest 5-10 useful ${typePlural} for this collection. Return a JSON array where each item is:
+{"name":"Category Name","description":"One sentence about which recipes this applies to","matchingRecipes":["Recipe Name 1","Recipe Name 2"]}
+
+Only include recipe names that actually exist in my list above.`;
+
+    const body = {
+      model,
+      max_tokens: 2000,
+      temperature: 0.3,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user",   content: userPrompt   },
+      ],
+    };
+
+    const isGemini = baseUrl.includes("googleapis.com") || baseUrl.includes("generativelanguage");
+    if (isGemini) body.response_format = { type: "json_object" };
+
+    console.log("[ai-taxonomy] calling", baseUrl, "model:", model, "type:", type);
+    const aiRes = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${aiApiKey}` },
+      body: JSON.stringify(body),
+    });
+
+    if (!aiRes.ok) {
+      const err = await aiRes.text();
+      throw new Error(`AI API ${aiRes.status}: ${err.slice(0, 300)}`);
+    }
+
+    const aiData  = await aiRes.json();
+    const rawText = aiData.choices?.[0]?.message?.content || "";
+    console.log("[ai-taxonomy] raw:", rawText.slice(0, 300));
+
+    const suggestions = extractJsonArray(rawText);
+    res.json({ suggestions, model });
+  } catch (e) {
+    console.error("[ai-taxonomy]", e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── Image proxy ────────────────────────────────────────────────────────────────
 app.get("/img", async (req, res) => {
   const { src, mealie, token } = req.query;
